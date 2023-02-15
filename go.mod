@@ -1,4 +1,4 @@
-module github.com/liangdas/mqant
+module github.com/huyangv/vmqant
 
 go 1.12
 
