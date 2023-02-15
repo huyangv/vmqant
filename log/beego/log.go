@@ -40,6 +40,7 @@ import (
 	"github.com/json-iterator/go"
 	"log"
 	"os"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -82,6 +83,8 @@ const (
 	LevelTrace = LevelDebug
 	LevelWarn  = LevelWarning
 )
+
+var colorReg, _ = regexp.Compile("^\u001B[\\s\\S]*m\\[")
 
 type JsonStruct struct {
 	FormatTime   string      `json:"formattime"`
@@ -346,6 +349,11 @@ func (bl *BeeLogger) DelLogger(adapterName string) error {
 
 func (bl *BeeLogger) writeToLoggers(original bool, when time.Time, msg string, level int) {
 	for _, l := range bl.outputs {
+		// 写入文件时去掉彩色
+		if l.name == "file" {
+			msg = colorReg.ReplaceAllString(msg, "[")
+			msg = strings.Replace(msg, "\u001B[0m", "", -1)
+		}
 		if original == true {
 			err := l.WriteOriginalMsg(when, msg, level)
 			if err != nil {
