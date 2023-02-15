@@ -137,10 +137,6 @@ func DefineErrorLogFunc(processId string, loggerFuncCallDepth int) FormatFunc {
 		msgstruct := &JsonStruct{}
 		msgstruct.FormatTime = string(h)
 		msgstruct.TimeStamp = when.UnixNano()
-		//msgjson := map[string]interface{}{
-		//	"formattime": string(h),
-		//	"timestamp":  when.UnixNano(),
-		//}
 		if strings.HasPrefix(msg, "@") {
 			//代表是结构化日志  msg=event_id  可选 v0=sub_event_id v1=error_msg v2=error_report v3=event_params[map,struct] v4=rparam[map,struct] v5=context_param[map,struct]
 			//msgjson["event_id"]=msg
