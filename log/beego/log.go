@@ -24,13 +24,13 @@
 //
 // Use it like this:
 //
-//	log.Trace("trace")
-//	log.Info("info")
-//	log.Warn("warning")
-//	log.Debug("debug")
-//	log.Critical("critical")
+//		log.Trace("trace")
+//		log.Info("info")
+//		log.Warn("warning")
+//		log.Debug("debug")
+//		log.Critical("critical")
 //
-//  more docs http://beego.me/docs/module/logs.md
+//	 more docs http://beego.me/docs/module/logs.md
 package logs
 
 import (
@@ -429,19 +429,7 @@ func (bl *BeeLogger) formatJson(when time.Time, span *BeegoTraceSpan, logLevel i
 	msgstruct.FormatTime = string(h)
 	msgstruct.TimeStamp = when.UnixNano()
 	msgstruct.Message = msg
-	//msgjson := map[string]interface{}{
-	//	"message":    msg,
-	//	"formattime": string(h),
-	//	"timestamp":  when.UnixNano(),
-	//}
 	if bl.enableFuncCallDepth {
-		//_, file, line, ok := runtime.Caller(bl.loggerFuncCallDepth)
-		//if !ok {
-		//	file = "???"
-		//	line = 0
-		//}
-		//_, filename := path.Split(file)
-		//msg = "[" + filename + ":" + strconv.Itoa(line) + "] " + msg
 		if logLevel <= LevelWarn {
 			CallStack, ShortFile := GetCallStack(5, bl.loggerFuncCallDepth, "")
 			//msgjson["file"] = ShortFile
@@ -879,7 +867,6 @@ func SetLogger(adapter string, config ...string) error {
 	return beeLogger.SetLogger(adapter, config...)
 }
 
-//
 // Emergency logs a message at emergency level.
 func Emergency(f interface{}, v ...interface{}) {
 	beeLogger.Emergency(nil, formatLog(f, v...))

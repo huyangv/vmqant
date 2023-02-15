@@ -208,17 +208,17 @@ func (app *DefaultApp) Run(mods ...module.Module) error {
 		panic(fmt.Sprintf("config path error %v", err))
 	}
 	var cof conf.Config
-	fmt.Println("Server configuration path :", app.opts.ConfPath)
+	//fmt.Println("Server configuration path :", app.opts.ConfPath)
 	conf.LoadConfig(f.Name()) //加载配置文件
 	cof = conf.Conf
 	app.Configure(cof) //解析配置信息
 
+	log.InitLog(app.opts.Debug, app.opts.ProcessID, app.opts.LogDir, cof.Log)
+	log.InitBI(app.opts.Debug, app.opts.ProcessID, app.opts.BIDir, cof.BI)
+
 	if app.configurationLoaded != nil {
 		app.configurationLoaded(app)
 	}
-
-	log.InitLog(app.opts.Debug, app.opts.ProcessID, app.opts.LogDir, cof.Log)
-	log.InitBI(app.opts.Debug, app.opts.ProcessID, app.opts.BIDir, cof.BI)
 
 	log.Info("mqant %v starting up", app.opts.Version)
 
