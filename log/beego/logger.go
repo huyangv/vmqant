@@ -92,10 +92,10 @@ const (
 )
 
 func FormatTimeHeader(when time.Time) ([]byte, int) {
-	if FormatTime == "" {
-		return []byte(""), 0
-	}
 	_, _, d := when.Date()
+	if FormatTime == "" {
+		return []byte(""), d
+	}
 	return []byte(when.Format(FormatTime)), d
 }
 
