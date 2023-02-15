@@ -18,11 +18,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sync"
 	"time"
 )
 
 var FormatTime = time.RFC3339Nano
+var WriteLogFileColor = true
+var ColorReg, _ = regexp.Compile("^\u001B[\\s\\S]*m\\[")
 
 type logWriter struct {
 	sync.Mutex
