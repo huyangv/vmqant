@@ -2,7 +2,7 @@ package httpgatewayapi
 
 import (
 	"fmt"
-	api "github.com/liangdas/mqant/httpgateway/proto"
+	api "github.com/huyangv/vmqant/httpgateway/proto"
 	"io/ioutil"
 	"mime"
 	"net"

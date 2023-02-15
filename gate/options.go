@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//Package gate 网关配置
+// Package gate 网关配置
 package gate
 
 import (
-	"github.com/liangdas/mqant/server"
+	"github.com/huyangv/vmqant/server"
 	"time"
 )
 
-//Option 网关配置项
+// Option 网关配置项
 type Option func(*Options)
 
-//Options 网关配置项
+// Options 网关配置项
 type Options struct {
 	ConcurrentTasks int
 	BufSize         int
@@ -44,7 +44,7 @@ type Options struct {
 	Opts            []server.Option
 }
 
-//NewOptions 网关配置项
+// NewOptions 网关配置项
 func NewOptions(opts ...Option) Options {
 	opt := Options{
 		Opts:            []server.Option{},
@@ -63,84 +63,84 @@ func NewOptions(opts ...Option) Options {
 	return opt
 }
 
-//ConcurrentTasks 设置单个连接允许的同时并发协程数
+// ConcurrentTasks 设置单个连接允许的同时并发协程数
 func ConcurrentTasks(s int) Option {
 	return func(o *Options) {
 		o.ConcurrentTasks = s
 	}
 }
 
-//BufSize 单个连接网络数据缓存大小
+// BufSize 单个连接网络数据缓存大小
 func BufSize(s int) Option {
 	return func(o *Options) {
 		o.BufSize = s
 	}
 }
 
-//MaxPackSize 单个协议包数据最大值
+// MaxPackSize 单个协议包数据最大值
 func MaxPackSize(s int) Option {
 	return func(o *Options) {
 		o.MaxPackSize = s
 	}
 }
 
-//Heartbeat 心跳时间
+// Heartbeat 心跳时间
 func Heartbeat(s time.Duration) Option {
 	return func(o *Options) {
 		o.Heartbeat = s
 	}
 }
 
-//OverTime 超时时间
+// OverTime 超时时间
 func OverTime(s time.Duration) Option {
 	return func(o *Options) {
 		o.OverTime = s
 	}
 }
 
-//SetRouteHandler 设置路由器
+// SetRouteHandler 设置路由器
 func SetRouteHandler(s RouteHandler) Option {
 	return func(o *Options) {
 		o.RouteHandler = s
 	}
 }
 
-//SetStorageHandler 设置session管理器
+// SetStorageHandler 设置session管理器
 func SetStorageHandler(s StorageHandler) Option {
 	return func(o *Options) {
 		o.StorageHandler = s
 	}
 }
 
-//SetAgentLearner SetAgentLearner(不要使用,建议用SetSessionLearner)
+// SetAgentLearner SetAgentLearner(不要使用,建议用SetSessionLearner)
 func SetAgentLearner(s AgentLearner) Option {
 	return func(o *Options) {
 		o.AgentLearner = s
 	}
 }
 
-//SetGateHandler SetGateHandler
+// SetGateHandler SetGateHandler
 func SetGateHandler(s GateHandler) Option {
 	return func(o *Options) {
 		o.GateHandler = s
 	}
 }
 
-//SetSessionLearner SetSessionLearner
+// SetSessionLearner SetSessionLearner
 func SetSessionLearner(s SessionLearner) Option {
 	return func(o *Options) {
 		o.SessionLearner = s
 	}
 }
 
-//SetSendMessageHook SetSendMessageHook
+// SetSendMessageHook SetSendMessageHook
 func SetSendMessageHook(s SendMessageHook) Option {
 	return func(o *Options) {
 		o.SendMessageHook = s
 	}
 }
 
-//Tls Tls
+// Tls Tls
 // Deprecated: 因为命名规范问题函数将废弃,请用TLS代替
 func Tls(s bool) Option {
 	return func(o *Options) {
@@ -148,7 +148,7 @@ func Tls(s bool) Option {
 	}
 }
 
-//TLS TLS
+// TLS TLS
 func TLS(s bool) Option {
 	return func(o *Options) {
 		o.TLS = s

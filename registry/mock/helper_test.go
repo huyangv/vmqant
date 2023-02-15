@@ -3,7 +3,7 @@ package mock
 import (
 	"testing"
 
-	"github.com/liangdas/mqant/registry"
+	"github.com/huyangv/vmqant/registry"
 )
 
 func TestDelServices(t *testing.T) {

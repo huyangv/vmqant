@@ -1,10 +1,10 @@
 package module
 
 import (
-	"github.com/liangdas/mqant/registry"
-	"github.com/liangdas/mqant/rpc"
-	"github.com/liangdas/mqant/rpc/pb"
-	"github.com/liangdas/mqant/selector"
+	"github.com/huyangv/vmqant/registry"
+	"github.com/huyangv/vmqant/rpc"
+	"github.com/huyangv/vmqant/rpc/pb"
+	"github.com/huyangv/vmqant/selector"
 	"github.com/nats-io/nats.go"
 	"time"
 )
@@ -166,14 +166,14 @@ func Parse(t bool) Option {
 	}
 }
 
-//RPC超时时间
+// RPC超时时间
 func RPCExpired(t time.Duration) Option {
 	return func(o *Options) {
 		o.RPCExpired = t
 	}
 }
 
-//单个节点RPC同时并发协程数
+// 单个节点RPC同时并发协程数
 func RPCMaxCoroutine(t int) Option {
 	return func(o *Options) {
 		o.RPCMaxCoroutine = t

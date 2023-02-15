@@ -16,7 +16,7 @@
 package network
 
 import (
-	"github.com/liangdas/mqant/utils/ip"
+	"github.com/huyangv/vmqant/utils/ip"
 	"golang.org/x/net/websocket"
 	"io"
 	"net"

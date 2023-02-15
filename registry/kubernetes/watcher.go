@@ -3,12 +3,11 @@ package kubernetes
 import (
 	"encoding/json"
 	"errors"
-	"github.com/liangdas/mqant/log"
-	"github.com/liangdas/mqant/registry"
-	"github.com/liangdas/mqant/registry/kubernetes/client"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/registry"
+	"github.com/huyangv/vmqant/registry/kubernetes/client"
 	"strings"
 	"sync"
-
 )
 
 type k8sWatcher struct {

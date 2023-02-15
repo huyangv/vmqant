@@ -15,7 +15,7 @@
 // Package log 日志结构定义
 package log
 
-import "github.com/liangdas/mqant/utils"
+import "github.com/huyangv/vmqant/utils"
 
 // TraceSpan A SpanID refers to a single span.
 type TraceSpan interface {

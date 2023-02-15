@@ -13,7 +13,7 @@ import (
 
 	"go.etcd.io/etcd/clientv3"
 
-	"github.com/liangdas/mqant/registry"
+	"github.com/huyangv/vmqant/registry"
 	hash "github.com/mitchellh/hashstructure"
 	"go.etcd.io/etcd/etcdserver/api/v3rpc/rpctypes"
 )

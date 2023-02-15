@@ -17,7 +17,7 @@ package mqrpc
 
 import (
 	"context"
-	"github.com/liangdas/mqant/rpc/pb"
+	"github.com/huyangv/vmqant/rpc/pb"
 	"reflect"
 )
 
@@ -29,12 +29,12 @@ type FunctionInfo struct {
 	Goroutine bool
 }
 
-//MQServer 代理者
+// MQServer 代理者
 type MQServer interface {
 	Callback(callinfo *CallInfo) error
 }
 
-//CallInfo RPC的请求信息
+// CallInfo RPC的请求信息
 type CallInfo struct {
 	RPCInfo  *rpcpb.RPCInfo
 	Result   *rpcpb.ResultInfo

@@ -17,9 +17,9 @@ package basemodule
 
 import (
 	"fmt"
-	"github.com/liangdas/mqant/conf"
-	"github.com/liangdas/mqant/log"
-	"github.com/liangdas/mqant/module"
+	"github.com/huyangv/vmqant/conf"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
 )
 
 // NewModuleManager 新建模块管理器

@@ -2,7 +2,7 @@ package timewheel
 
 import (
 	"container/list"
-	"github.com/liangdas/mqant/log"
+	"github.com/huyangv/vmqant/log"
 	"math"
 	"time"
 )
@@ -113,7 +113,7 @@ func (tw *TimeWheel) AddTimer(delay time.Duration, data TaskData, job Job) {
 	tw.addTaskChannel <- Task{delay: delay, data: data, job: job}
 }
 
-//可以通过key来撤销一个未执行的定时器
+// 可以通过key来撤销一个未执行的定时器
 func (tw *TimeWheel) AddTimerCustom(delay time.Duration, key interface{}, data TaskData, job Job) {
 	if delay <= 0 {
 		return

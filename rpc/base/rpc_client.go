@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,13 +16,13 @@ package defaultrpc
 import (
 	"context"
 	"fmt"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
+	"github.com/huyangv/vmqant/rpc"
+	"github.com/huyangv/vmqant/rpc/pb"
+	"github.com/huyangv/vmqant/rpc/util"
+	"github.com/huyangv/vmqant/utils/uuid"
 	"google.golang.org/protobuf/proto"
-	"github.com/liangdas/mqant/log"
-	"github.com/liangdas/mqant/module"
-	"github.com/liangdas/mqant/rpc"
-	"github.com/liangdas/mqant/rpc/pb"
-	"github.com/liangdas/mqant/rpc/util"
-	"github.com/liangdas/mqant/utils/uuid"
 	"os"
 	"time"
 )
@@ -146,7 +146,8 @@ func (c *RPCClient) CallNRArgs(_func string, ArgsType []string, args [][]byte) (
 	return c.nats_client.CallNR(callInfo)
 }
 
-/**
+/*
+*
 消息请求 需要回复
 */
 func (c *RPCClient) Call(ctx context.Context, _func string, params ...interface{}) (interface{}, string) {
@@ -173,7 +174,8 @@ func (c *RPCClient) Call(ctx context.Context, _func string, params ...interface{
 	return r, errstr
 }
 
-/**
+/*
+*
 消息请求 不需要回复
 */
 func (c *RPCClient) CallNR(_func string, params ...interface{}) (err error) {

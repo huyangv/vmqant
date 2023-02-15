@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,13 +15,13 @@ package defaultrpc
 
 import (
 	"fmt"
-	"google.golang.org/protobuf/proto"
-	"github.com/liangdas/mqant/log"
-	"github.com/liangdas/mqant/module"
-	"github.com/liangdas/mqant/rpc"
-	"github.com/liangdas/mqant/rpc/pb"
-	"github.com/liangdas/mqant/utils"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
+	"github.com/huyangv/vmqant/rpc"
+	"github.com/huyangv/vmqant/rpc/pb"
+	"github.com/huyangv/vmqant/utils"
 	"github.com/nats-io/nats.go"
+	"google.golang.org/protobuf/proto"
 	"runtime"
 	"sync"
 	"time"
@@ -84,7 +84,8 @@ func (c *NatsClient) Done() (err error) {
 	return
 }
 
-/**
+/*
+*
 消息请求
 */
 func (c *NatsClient) Call(callInfo *mqrpc.CallInfo, callback chan *rpcpb.ResultInfo) error {
@@ -108,7 +109,8 @@ func (c *NatsClient) Call(callInfo *mqrpc.CallInfo, callback chan *rpcpb.ResultI
 	return c.app.Transport().Publish(c.session.GetNode().Address, body)
 }
 
-/**
+/*
+*
 消息请求 不需要回复
 */
 func (c *NatsClient) CallNR(callInfo *mqrpc.CallInfo) error {
@@ -119,7 +121,8 @@ func (c *NatsClient) CallNR(callInfo *mqrpc.CallInfo) error {
 	return c.app.Transport().Publish(c.session.GetNode().Address, body)
 }
 
-/**
+/*
+*
 接收应答信息
 */
 func (c *NatsClient) on_request_handle() (err error) {

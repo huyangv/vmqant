@@ -5,13 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/liangdas/mqant/registry"
-	"github.com/liangdas/mqant/registry/kubernetes/client"
+	"github.com/huyangv/vmqant/registry"
+	"github.com/huyangv/vmqant/registry/kubernetes/client"
 	"os"
 	"regexp"
 	"strings"
 	"time"
-
 )
 
 type kregistry struct {

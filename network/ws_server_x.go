@@ -2,8 +2,8 @@ package network
 
 import (
 	"crypto/tls"
-	"github.com/liangdas/mqant/log"
-	"github.com/liangdas/mqant/utils/ip"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/utils/ip"
 	"golang.org/x/net/websocket"
 	"net"
 	"net/http"

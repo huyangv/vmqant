@@ -3,15 +3,15 @@ package httpgateway
 
 import (
 	"context"
-	"github.com/liangdas/mqant/httpgateway/api"
-	"github.com/liangdas/mqant/httpgateway/errors"
-	"github.com/liangdas/mqant/httpgateway/proto"
-	"github.com/liangdas/mqant/module"
-	"github.com/liangdas/mqant/rpc"
+	"github.com/huyangv/vmqant/httpgateway/api"
+	"github.com/huyangv/vmqant/httpgateway/errors"
+	"github.com/huyangv/vmqant/httpgateway/proto"
+	"github.com/huyangv/vmqant/module"
+	"github.com/huyangv/vmqant/rpc"
 	"net/http"
 )
 
-//APIHandler 网关handler
+// APIHandler 网关handler
 type APIHandler struct {
 	Opts Options
 	App  module.App

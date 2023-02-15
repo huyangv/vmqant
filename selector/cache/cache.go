@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liangdas/mqant/log"
-	"github.com/liangdas/mqant/registry"
-	"github.com/liangdas/mqant/selector"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/registry"
+	"github.com/huyangv/vmqant/selector"
 )
 
 type cacheSelector struct {

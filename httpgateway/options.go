@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//Package httpgateway 网关配置
+// Package httpgateway 网关配置
 package httpgateway
 
 import (
 	"errors"
 	"fmt"
-	"github.com/liangdas/mqant/module"
-	"github.com/liangdas/mqant/registry"
-	"github.com/liangdas/mqant/selector"
+	"github.com/huyangv/vmqant/module"
+	"github.com/huyangv/vmqant/registry"
+	"github.com/huyangv/vmqant/selector"
 	"math/rand"
 	"net/http"
 	"strings"

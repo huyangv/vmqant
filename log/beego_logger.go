@@ -18,10 +18,10 @@ package log
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/liangdas/mqant/log/beego"
+	"github.com/huyangv/vmqant/log/beego"
 )
 
-//NewBeegoLogger beego
+// NewBeegoLogger beego
 func NewBeegoLogger(debug bool, ProcessID string, Logdir string, settings map[string]interface{}) *logs.BeeLogger {
 	log := logs.NewLogger()
 	log.ProcessID = ProcessID

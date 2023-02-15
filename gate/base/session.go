@@ -20,12 +20,12 @@ import (
 	"strconv"
 	"sync"
 
+	"github.com/huyangv/vmqant/gate"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
+	"github.com/huyangv/vmqant/rpc"
+	"github.com/huyangv/vmqant/utils"
 	"google.golang.org/protobuf/proto"
-	"github.com/liangdas/mqant/gate"
-	"github.com/liangdas/mqant/log"
-	"github.com/liangdas/mqant/module"
-	"github.com/liangdas/mqant/rpc"
-	"github.com/liangdas/mqant/utils"
 )
 
 type sessionagent struct {
@@ -139,7 +139,7 @@ func (sesid *sessionagent) SettingsRange(f func(k, v string) bool) {
 	}
 }
 
-//ImportSettings 合并两个map 并且以 agent.(Agent).GetSession().Settings 已有的优先
+// ImportSettings 合并两个map 并且以 agent.(Agent).GetSession().Settings 已有的优先
 func (sesid *sessionagent) ImportSettings(settings map[string]string) error {
 	sesid.lock.Lock()
 	if sesid.session.GetSettings() == nil {
@@ -579,7 +579,8 @@ func (sesid *sessionagent) Close() (err string) {
 	return
 }
 
-/**
+/*
+*
 每次rpc调用都拷贝一份新的Session进行传输
 */
 func (sesid *sessionagent) Clone() gate.Session {
@@ -649,7 +650,7 @@ func (sesid *sessionagent) ExtractSpan() log.TraceSpan {
 	return agent
 }
 
-//是否是访客(未登录) ,默认判断规则为 userId==""代表访客
+// 是否是访客(未登录) ,默认判断规则为 userId==""代表访客
 func (sesid *sessionagent) IsGuest() bool {
 	if sesid.judgeGuest != nil {
 		return sesid.judgeGuest(sesid)
@@ -660,7 +661,7 @@ func (sesid *sessionagent) IsGuest() bool {
 	return false
 }
 
-//设置自动的访客判断函数,记得一定要在gate模块设置这个值,以免部分模块因为未设置这个判断函数造成错误的判断
+// 设置自动的访客判断函数,记得一定要在gate模块设置这个值,以免部分模块因为未设置这个判断函数造成错误的判断
 func (sesid *sessionagent) JudgeGuest(judgeGuest func(session gate.Session) bool) {
 	sesid.judgeGuest = judgeGuest
 }

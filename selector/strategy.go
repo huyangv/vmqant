@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/liangdas/mqant/registry"
+	"github.com/huyangv/vmqant/registry"
 )
 
 func init() {

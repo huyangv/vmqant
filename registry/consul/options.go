@@ -6,7 +6,7 @@ import (
 
 	consul "github.com/hashicorp/consul/api"
 
-	"github.com/liangdas/mqant/registry"
+	"github.com/huyangv/vmqant/registry"
 )
 
 // Connect specifies services should be registered as Consul Connect services
@@ -28,13 +28,11 @@ func Config(c *consul.Config) registry.Option {
 	}
 }
 
-//
 // TCPCheck will tell the service provider to check the service address
 // and port every `t` interval. It will enabled only if `t` is greater than 0.
 // See `TCP + Interval` for more information [1].
 //
 // [1] https://www.consul.io/docs/agent/checks.html
-//
 func TCPCheck(t time.Duration) registry.Option {
 	return func(o *registry.Options) {
 		if t <= time.Duration(0) {

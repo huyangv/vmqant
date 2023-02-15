@@ -1,13 +1,13 @@
 package server
 
 import (
-	"github.com/liangdas/mqant/conf"
-	"github.com/liangdas/mqant/log"
-	"github.com/liangdas/mqant/module"
-	"github.com/liangdas/mqant/registry"
-	"github.com/liangdas/mqant/rpc"
-	"github.com/liangdas/mqant/rpc/base"
-	"github.com/liangdas/mqant/utils/lib/addr"
+	"github.com/huyangv/vmqant/conf"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
+	"github.com/huyangv/vmqant/registry"
+	"github.com/huyangv/vmqant/rpc"
+	"github.com/huyangv/vmqant/rpc/base"
+	"github.com/huyangv/vmqant/utils/lib/addr"
 	"strconv"
 	"strings"
 	"sync"

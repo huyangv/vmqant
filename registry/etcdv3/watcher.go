@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/liangdas/mqant/registry"
+	"github.com/huyangv/vmqant/registry"
 	"go.etcd.io/etcd/clientv3"
 )
 

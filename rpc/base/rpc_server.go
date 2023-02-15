@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//      http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -16,12 +16,12 @@ package defaultrpc
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
+	"github.com/huyangv/vmqant/rpc"
+	"github.com/huyangv/vmqant/rpc/pb"
+	"github.com/huyangv/vmqant/rpc/util"
 	"google.golang.org/protobuf/proto"
-	"github.com/liangdas/mqant/log"
-	"github.com/liangdas/mqant/module"
-	"github.com/liangdas/mqant/rpc"
-	"github.com/liangdas/mqant/rpc/pb"
-	"github.com/liangdas/mqant/rpc/util"
 	"reflect"
 	"runtime"
 	"sync"
@@ -71,7 +71,8 @@ func (s *RPCServer) SetGoroutineControl(control mqrpc.GoroutineControl) {
 	s.control = control
 }
 
-/**
+/*
+*
 获取当前正在执行的goroutine 数量
 */
 func (s *RPCServer) GetExecuting() int64 {
@@ -374,7 +375,7 @@ func (s *RPCServer) _runFunc(start time.Time, functionInfo *mqrpc.FunctionInfo, 
 	}
 }
 
-//---------------------------------if _func is not a function or para num and type not match,it will cause panic
+// ---------------------------------if _func is not a function or para num and type not match,it will cause panic
 func (s *RPCServer) runFunc(callInfo *mqrpc.CallInfo) {
 	start := time.Now()
 	defer func() {

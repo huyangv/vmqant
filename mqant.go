@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//Package mqant mqant
+// Package mqant mqant
 package mqant
 
 import (
-	"github.com/liangdas/mqant/app"
-	"github.com/liangdas/mqant/module"
+	"github.com/huyangv/vmqant/app"
+	"github.com/huyangv/vmqant/module"
 )
 
-//CreateApp 创建mqant的app实例
+// CreateApp 创建mqant的app实例
 func CreateApp(opts ...module.Option) module.App {
 	opts = append(opts, module.Version(version))
 	return app.NewApp(opts...)

@@ -2,7 +2,7 @@ package server
 
 import (
 	"context"
-	"github.com/liangdas/mqant/registry"
+	"github.com/huyangv/vmqant/registry"
 	"time"
 )
 

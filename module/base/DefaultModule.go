@@ -16,9 +16,9 @@
 package basemodule
 
 import (
-	"github.com/liangdas/mqant/conf"
-	"github.com/liangdas/mqant/log"
-	"github.com/liangdas/mqant/module"
+	"github.com/huyangv/vmqant/conf"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
 	"runtime"
 	"sync"
 )

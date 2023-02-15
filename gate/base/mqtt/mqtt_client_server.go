@@ -18,8 +18,8 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
-	"github.com/liangdas/mqant/conf"
-	"github.com/liangdas/mqant/network"
+	"github.com/huyangv/vmqant/conf"
+	"github.com/huyangv/vmqant/network"
 	"math"
 	"sync"
 )
