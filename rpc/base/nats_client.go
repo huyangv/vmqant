@@ -168,8 +168,10 @@ func (c *NatsClient) on_request_handle() (err error) {
 			}
 			continue
 		} else if err != nil {
-			fmt.Println(fmt.Sprintf("%v rpcclient error: %v", time.Now().String(), err.Error()))
-			log.Error("NatsClient error with '%v'", err)
+			//fmt.Println(fmt.Sprintf("%v rpcclient error: %v", time.Now().String(), err.Error()))
+			if err.Error() != "nats: invalid subscription" {
+				log.Error("NatsClient error with '%v'", err)
+			}
 			if !c.subs.IsValid() {
 				//订阅已关闭，需要重新订阅
 				c.subs, err = c.app.Transport().SubscribeSync(c.callbackqueueName)
