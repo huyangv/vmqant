@@ -162,6 +162,13 @@ func (c *cacheSelector) update(res *registry.Result) {
 	if len(res.Service.Nodes) == 0 {
 		switch res.Action {
 		case "delete":
+			for _, service := range services {
+				for _, cur := range service.Nodes {
+					if c.Options().Watcher != nil {
+						c.Options().Watcher(cur)
+					}
+				}
+			}
 			c.del(res.Service.Name)
 		}
 		return
