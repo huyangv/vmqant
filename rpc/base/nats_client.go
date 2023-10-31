@@ -15,16 +15,17 @@ package defaultrpc
 
 import (
 	"fmt"
-	"github.com/huyangv/vmqant/log"
-	"github.com/huyangv/vmqant/module"
-	"github.com/huyangv/vmqant/rpc"
-	"github.com/huyangv/vmqant/rpc/pb"
-	"github.com/huyangv/vmqant/utils"
-	"github.com/nats-io/nats.go"
-	"google.golang.org/protobuf/proto"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
+	mqrpc "github.com/huyangv/vmqant/rpc"
+	rpcpb "github.com/huyangv/vmqant/rpc/pb"
+	mqanttools "github.com/huyangv/vmqant/utils"
+	"github.com/nats-io/nats.go"
+	"google.golang.org/protobuf/proto"
 )
 
 type NatsClient struct {
@@ -192,10 +193,7 @@ func (c *NatsClient) on_request_handle() (err error) {
 			//删除
 			c.callinfos.Delete(correlation_id)
 			if clinetCallInfo != nil {
-				if clinetCallInfo.(ClinetCallInfo).call != nil {
-					clinetCallInfo.(ClinetCallInfo).call <- resultInfo
-					c.CloseFch(clinetCallInfo.(ClinetCallInfo).call)
-				}
+				c.PushResultToChan(clinetCallInfo.(ClinetCallInfo), resultInfo)
 			} else {
 				//可能客户端已超时了，但服务端处理完还给回调了
 				log.Warning("rpc callback no found : [%s]", correlation_id)
@@ -204,6 +202,30 @@ func (c *NatsClient) on_request_handle() (err error) {
 	}
 
 	return nil
+}
+
+func (c *NatsClient) PushResultToChan(callInfo ClinetCallInfo, resultInfo *rpcpb.ResultInfo) {
+	defer func() {
+		if r := recover(); r != nil {
+			var rn = ""
+			switch r.(type) {
+
+			case string:
+				rn = r.(string)
+			case error:
+				rn = r.(error).Error()
+			}
+			buf := make([]byte, 1024)
+			l := runtime.Stack(buf, false)
+			errstr := string(buf[:l])
+			log.Error("%s\n ----Stack----\n%s", rn, errstr)
+			fmt.Println(errstr)
+		}
+	}()
+	if callInfo.call != nil {
+		callInfo.call <- resultInfo
+		c.CloseFch(callInfo.call)
+	}
 }
 
 func (c *NatsClient) UnmarshalResult(data []byte) (*rpcpb.ResultInfo, error) {
