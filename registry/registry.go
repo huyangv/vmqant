@@ -3,6 +3,7 @@ package registry
 
 import (
 	"errors"
+	consul "github.com/hashicorp/consul/api"
 )
 
 // Registry The registry provides an interface for service discovery
@@ -17,6 +18,7 @@ type Registry interface {
 	ListServices() ([]*Service, error)
 	Watch(...WatchOption) (Watcher, error)
 	String() string
+	GetConsulClient() *consul.Client
 }
 
 // Option Option

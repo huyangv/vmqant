@@ -6,6 +6,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	consul "github.com/hashicorp/consul/api"
 	"path"
 	"strings"
 	"sync"
@@ -306,4 +307,8 @@ func NewRegistry(opts ...registry.Option) registry.Registry {
 	}
 	configure(e, opts...)
 	return e
+}
+
+func (e *etcdv3Registry) GetConsulClient() *consul.Client {
+	return nil
 }

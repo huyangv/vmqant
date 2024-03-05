@@ -1,7 +1,9 @@
 package mock
 
-import ()
-import "github.com/huyangv/vmqant/registry"
+import (
+	consul "github.com/hashicorp/consul/api"
+	"github.com/huyangv/vmqant/registry"
+)
 
 type mockRegistry struct {
 	Services map[string][]*registry.Service
@@ -110,4 +112,8 @@ func NewRegistry(opts ...registry.Options) registry.Registry {
 	m := &mockRegistry{Services: make(map[string][]*registry.Service)}
 	m.init()
 	return m
+}
+
+func (m *mockRegistry) GetConsulClient() *consul.Client {
+	return nil
 }
