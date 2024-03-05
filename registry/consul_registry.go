@@ -350,3 +350,7 @@ func (c *consulRegistry) String() string {
 func (c *consulRegistry) Options() Options {
 	return c.opts
 }
+
+func (c *consulRegistry) GetConsulClient() *consul.Client {
+	return c.Client
+}
