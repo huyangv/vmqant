@@ -79,6 +79,16 @@ func (s *RPCServer) GetExecuting() int64 {
 	return s.executing
 }
 
+// GetFunction
+/*
+ * @description 获取注册的function
+ * @param id
+ * @return *mqrpc.FunctionInfo
+ */
+func (s *RPCServer) GetFunction(id string) *mqrpc.FunctionInfo {
+	return s.functions[id]
+}
+
 // you must call the function before calling Open and Go
 func (s *RPCServer) Register(id string, f interface{}) {
 

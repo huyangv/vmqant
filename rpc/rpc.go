@@ -80,6 +80,7 @@ type RPCServer interface {
 	SetListener(listener RPCListener)
 	SetGoroutineControl(control GoroutineControl)
 	GetExecuting() int64
+	GetFunction(id string) *FunctionInfo
 	Register(id string, f interface{})
 	RegisterGO(id string, f interface{})
 	Done() (err error)
