@@ -17,6 +17,7 @@ type Server interface {
 	SetListener(listener mqrpc.RPCListener)
 	Register(id string, f interface{})
 	RegisterGO(id string, f interface{})
+	GetRpcServer() mqrpc.RPCServer
 	ServiceRegister() error
 	ServiceDeregister() error
 	Start() error

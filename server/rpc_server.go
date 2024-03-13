@@ -81,6 +81,15 @@ func (s *rpcServer) RegisterGO(id string, f interface{}) {
 	s.server.RegisterGO(id, f)
 }
 
+// GetRpcServer
+/*
+ * @description 获取rpcServer
+ * @return mqrpc.RPCServer
+ */
+func (s *rpcServer) GetRpcServer() mqrpc.RPCServer {
+	return s.server
+}
+
 func (s *rpcServer) ServiceRegister() error {
 	// parse address for host, port
 	config := s.Options()
