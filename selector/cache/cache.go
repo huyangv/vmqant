@@ -10,7 +10,7 @@ import (
 	"github.com/huyangv/vmqant/selector"
 )
 
-type cacheSelector struct {
+type CacheSelector struct {
 	so  selector.Options
 	ttl time.Duration
 
@@ -30,7 +30,7 @@ var (
 	DefaultTTL = time.Minute
 )
 
-func (c *cacheSelector) quit() bool {
+func (c *CacheSelector) quit() bool {
 	select {
 	case <-c.exit:
 		return true
@@ -42,7 +42,7 @@ func (c *cacheSelector) quit() bool {
 // cp copies a service. Because we're caching handing back pointers would
 // create a race condition, so we do this instead
 // its fast enough
-func (c *cacheSelector) cp(current []*registry.Service) []*registry.Service {
+func (c *CacheSelector) cp(current []*registry.Service) []*registry.Service {
 	var services []*registry.Service
 
 	for _, service := range current {
@@ -75,12 +75,12 @@ func (c *cacheSelector) cp(current []*registry.Service) []*registry.Service {
 	return services
 }
 
-func (c *cacheSelector) del(service string) {
+func (c *CacheSelector) del(service string) {
 	delete(c.cache, service)
 	delete(c.ttls, service)
 }
 
-func (c *cacheSelector) get(service string) ([]*registry.Service, error) {
+func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 	c.Lock()
 	defer c.Unlock()
 
@@ -134,17 +134,16 @@ func (c *cacheSelector) get(service string) ([]*registry.Service, error) {
 	}
 
 	// other error
-
 	// return expired cache as last resort
 	return c.cp(services), nil
 }
 
-func (c *cacheSelector) set(service string, services []*registry.Service) {
+func (c *CacheSelector) set(service string, services []*registry.Service) {
 	c.cache[service] = services
 	c.ttls[service] = time.Now().Add(c.ttl)
 }
 
-func (c *cacheSelector) update(res *registry.Result) {
+func (c *CacheSelector) update(res *registry.Result) {
 	if res == nil || res.Service == nil {
 		return
 	}
@@ -267,7 +266,7 @@ func (c *cacheSelector) update(res *registry.Result) {
 // it creates a new watcher if there's a problem
 // reloads the watcher if Init is called
 // and returns when Close is called
-func (c *cacheSelector) run(name string) {
+func (c *CacheSelector) run(name string) {
 	for {
 		// exit early if already dead
 		if c.quit() {
@@ -300,7 +299,7 @@ func (c *cacheSelector) run(name string) {
 
 // watch loops the next event and calls update
 // it returns if there's an error
-func (c *cacheSelector) watch(w registry.Watcher) error {
+func (c *CacheSelector) watch(w registry.Watcher) error {
 	defer w.Stop()
 
 	// manage this loop
@@ -324,7 +323,7 @@ func (c *cacheSelector) watch(w registry.Watcher) error {
 	}
 }
 
-func (c *cacheSelector) Init(opts ...selector.Option) error {
+func (c *CacheSelector) Init(opts ...selector.Option) error {
 	for _, o := range opts {
 		o(&c.so)
 	}
@@ -342,11 +341,11 @@ func (c *cacheSelector) Init(opts ...selector.Option) error {
 	return nil
 }
 
-func (c *cacheSelector) Options() selector.Options {
+func (c *CacheSelector) Options() selector.Options {
 	return c.so
 }
 
-func (c *cacheSelector) GetService(service string) ([]*registry.Service, error) {
+func (c *CacheSelector) GetService(service string) ([]*registry.Service, error) {
 	services, err := c.get(service)
 	if err != nil {
 		return nil, err
@@ -354,7 +353,7 @@ func (c *cacheSelector) GetService(service string) ([]*registry.Service, error) 
 	return services, nil
 }
 
-func (c *cacheSelector) Select(service string, opts ...selector.SelectOption) (selector.Next, error) {
+func (c *CacheSelector) Select(service string, opts ...selector.SelectOption) (selector.Next, error) {
 	sopts := selector.SelectOptions{
 		Strategy: c.so.Strategy,
 	}
@@ -384,16 +383,16 @@ func (c *cacheSelector) Select(service string, opts ...selector.SelectOption) (s
 	return sopts.Strategy(services), nil
 }
 
-func (c *cacheSelector) Mark(service string, node *registry.Node, err error) {
+func (c *CacheSelector) Mark(service string, node *registry.Node, err error) {
 	return
 }
 
-func (c *cacheSelector) Reset(service string) {
+func (c *CacheSelector) Reset(service string) {
 	return
 }
 
 // Close stops the watcher and destroys the cache
-func (c *cacheSelector) Close() error {
+func (c *CacheSelector) Close() error {
 	c.Lock()
 	c.cache = make(map[string][]*registry.Service)
 	c.watched = make(map[string]bool)
@@ -408,7 +407,7 @@ func (c *cacheSelector) Close() error {
 	return nil
 }
 
-func (c *cacheSelector) String() string {
+func (c *CacheSelector) String() string {
 	return "cache"
 }
 
@@ -433,7 +432,7 @@ func NewSelector(opts ...selector.Option) selector.Selector {
 		}
 	}
 
-	return &cacheSelector{
+	return &CacheSelector{
 		so:      sopts,
 		ttl:     ttl,
 		watched: make(map[string]bool),
@@ -442,4 +441,42 @@ func NewSelector(opts ...selector.Option) selector.Selector {
 		reload:  make(chan bool, 1),
 		exit:    make(chan bool),
 	}
+}
+
+// 强制刷新指定服务的缓存
+func (c *CacheSelector) ForceRefresh(service string) error {
+	c.Lock()
+	defer c.Unlock()
+
+	// 删除缓存，强制下次获取时从注册中心重新拉取
+	delete(c.cache, service)
+	delete(c.ttls, service)
+
+	log.Info("Force refreshed cache for service: %s", service)
+	return nil
+}
+
+// 从缓存中移除死节点
+func (c *CacheSelector) RemoveDeadNode(service string, nodeID string) {
+	c.Lock()
+	defer c.Unlock()
+
+	services, ok := c.cache[service]
+	if !ok {
+		return
+	}
+
+	for i, svc := range services {
+		var aliveNodes []*registry.Node
+		for _, node := range svc.Nodes {
+			if node.Id != nodeID {
+				aliveNodes = append(aliveNodes, node)
+			} else {
+				log.Warning("Removed dead node from cache: %s", nodeID)
+			}
+		}
+		services[i].Nodes = aliveNodes
+	}
+
+	c.set(service, services)
 }

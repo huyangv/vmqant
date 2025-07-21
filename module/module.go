@@ -17,9 +17,10 @@ package module
 
 import (
 	"context"
+
 	"github.com/huyangv/vmqant/conf"
 	"github.com/huyangv/vmqant/registry"
-	"github.com/huyangv/vmqant/rpc"
+	mqrpc "github.com/huyangv/vmqant/rpc"
 	"github.com/huyangv/vmqant/selector"
 	"github.com/nats-io/nats.go"
 )
@@ -79,6 +80,8 @@ type App interface {
 	Invoke(module RPCModule, moduleType string, _func string, params ...interface{}) (interface{}, string)
 	InvokeNR(module RPCModule, moduleType string, _func string, params ...interface{}) error
 	Call(ctx context.Context, moduleType, _func string, param mqrpc.ParamOption, opts ...selector.SelectOption) (interface{}, string)
+	InvokeWithCleanup(module RPCModule, moduleType string, _func string, params ...interface{}) (interface{}, string)
+	InvokeNRWithCleanup(module RPCModule, moduleType string, _func string, params ...interface{}) error
 
 	/**
 	添加一个 自定义参数序列化接口

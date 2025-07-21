@@ -20,17 +20,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/huyangv/vmqant/conf"
-	"github.com/huyangv/vmqant/log"
-	"github.com/huyangv/vmqant/module"
-	"github.com/huyangv/vmqant/module/base"
-	"github.com/huyangv/vmqant/module/modules"
-	"github.com/huyangv/vmqant/registry"
-	"github.com/huyangv/vmqant/rpc"
-	"github.com/huyangv/vmqant/selector"
-	"github.com/huyangv/vmqant/selector/cache"
-	"github.com/nats-io/nats.go"
-	"github.com/pkg/errors"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -39,6 +28,18 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/huyangv/vmqant/conf"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
+	basemodule "github.com/huyangv/vmqant/module/base"
+	"github.com/huyangv/vmqant/module/modules"
+	"github.com/huyangv/vmqant/registry"
+	mqrpc "github.com/huyangv/vmqant/rpc"
+	"github.com/huyangv/vmqant/selector"
+	"github.com/huyangv/vmqant/selector/cache"
+	"github.com/nats-io/nats.go"
+	"github.com/pkg/errors"
 )
 
 type resultInfo struct {
@@ -558,5 +559,55 @@ func (app *DefaultApp) ProtocolMarshal(Trace string, Result interface{}, Error s
 func (app *DefaultApp) NewProtocolMarshal(data []byte) module.ProtocolMarshal {
 	return &protocolMarshalImp{
 		data: data,
+	}
+}
+
+// 带清理功能的Invoke，当超时时会清理serverList缓存
+func (app *DefaultApp) InvokeWithCleanup(module module.RPCModule, moduleType string, _func string, params ...interface{}) (result interface{}, err string) {
+	server, e := app.GetRouteServer(moduleType)
+	if e != nil {
+		err = e.Error()
+		return
+	}
+	result, err = server.Call(nil, _func, params...)
+
+	// 检查是否为超时或关闭，如果是则清理缓存
+	if err == "deadline exceeded" || err == "client closed" {
+		app.cleanupServerCache(server.GetNode().Id)
+	}
+	return
+}
+
+// 带清理功能的InvokeNR，当超时时会清理serverList缓存
+func (app *DefaultApp) InvokeNRWithCleanup(module module.RPCModule, moduleType string, _func string, params ...interface{}) (err error) {
+	server, e := app.GetRouteServer(moduleType)
+	if e != nil {
+		return e
+	}
+	err = server.CallNR(_func, params...)
+	if err != nil {
+		errStr := err.Error()
+		// 检查是否为超时或关闭，如果是则清理缓存
+		if errStr == "deadline exceeded" || errStr == "client closed" {
+			app.cleanupServerCache(server.GetNode().Id)
+		}
+	}
+	return
+}
+
+// 清理指定节点ID的服务器缓存，并联动清理selector缓存
+func (app *DefaultApp) cleanupServerCache(nodeID string) {
+	if session, ok := app.serverList.Load(nodeID); ok {
+		if s, ok := session.(module.ServerSession); ok {
+			serviceName := s.GetName()
+			s.GetRpc().Done()
+
+			// 联动清理selector缓存
+			if cs, ok := app.opts.Selector.(*cache.CacheSelector); ok {
+				cs.RemoveDeadNode(serviceName, nodeID)
+			}
+		}
+		app.serverList.Delete(nodeID)
+		log.Warning("Cleaned up dead server cache: %s", nodeID)
 	}
 }

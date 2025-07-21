@@ -18,17 +18,18 @@ package basemodule
 import (
 	"context"
 	"fmt"
+	"os"
+
 	"github.com/huyangv/vmqant/conf"
 	"github.com/huyangv/vmqant/log"
 	"github.com/huyangv/vmqant/module"
-	"github.com/huyangv/vmqant/rpc"
-	"github.com/huyangv/vmqant/rpc/pb"
+	mqrpc "github.com/huyangv/vmqant/rpc"
+	rpcpb "github.com/huyangv/vmqant/rpc/pb"
 	"github.com/huyangv/vmqant/selector"
 	"github.com/huyangv/vmqant/server"
 	"github.com/huyangv/vmqant/service"
-	"github.com/huyangv/vmqant/utils"
+	mqanttools "github.com/huyangv/vmqant/utils"
 	"github.com/pkg/errors"
-	"os"
 )
 
 // BaseModule 默认的RPCModule实现
@@ -242,6 +243,16 @@ func (m *BaseModule) Call(ctx context.Context, moduleType, _func string, param m
 // Deprecated: 因为命名规范问题函数将废弃,请用Call代替
 func (m *BaseModule) RpcCall(ctx context.Context, moduleType, _func string, param mqrpc.ParamOption, opts ...selector.SelectOption) (interface{}, string) {
 	return m.App.Call(ctx, moduleType, _func, param, opts...)
+}
+
+// InvokeWithCleanup
+func (m *BaseModule) InvokeWithCleanup(moduleType string, _func string, params ...interface{}) (result interface{}, err string) {
+	return m.App.InvokeWithCleanup(m.GetSubclass(), moduleType, _func, params...)
+}
+
+// InvokeNRWithCleanup
+func (m *BaseModule) InvokeNRWithCleanup(moduleType string, _func string, params ...interface{}) (err error) {
+	return m.App.InvokeNRWithCleanup(m.GetSubclass(), moduleType, _func, params...)
 }
 
 // NoFoundFunction  当hander未找到时调用
