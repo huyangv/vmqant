@@ -81,7 +81,6 @@ type App interface {
 	InvokeNR(module RPCModule, moduleType string, _func string, params ...interface{}) error
 	Call(ctx context.Context, moduleType, _func string, param mqrpc.ParamOption, opts ...selector.SelectOption) (interface{}, string)
 	InvokeWithCleanup(module RPCModule, moduleType string, _func string, params ...interface{}) (interface{}, string)
-	InvokeNRWithCleanup(module RPCModule, moduleType string, _func string, params ...interface{}) error
 
 	/**
 	添加一个 自定义参数序列化接口

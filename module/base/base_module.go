@@ -250,11 +250,6 @@ func (m *BaseModule) InvokeWithCleanup(moduleType string, _func string, params .
 	return m.App.InvokeWithCleanup(m.GetSubclass(), moduleType, _func, params...)
 }
 
-// InvokeNRWithCleanup
-func (m *BaseModule) InvokeNRWithCleanup(moduleType string, _func string, params ...interface{}) (err error) {
-	return m.App.InvokeNRWithCleanup(m.GetSubclass(), moduleType, _func, params...)
-}
-
 // NoFoundFunction  当hander未找到时调用
 func (m *BaseModule) NoFoundFunction(fn string) (*mqrpc.FunctionInfo, error) {
 	if m.listener != nil {

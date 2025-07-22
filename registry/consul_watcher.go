@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/consul/api"
 	"github.com/hashicorp/consul/api/watch"
+	"github.com/huyangv/vmqant/log"
 )
 
 type consulWatcher struct {
@@ -118,6 +119,7 @@ func (cw *consulWatcher) serviceHandler(idx uint64, data interface{}) {
 
 	// serviceMap is the new set of services keyed by name+version
 	for _, newService := range serviceMap {
+		log.Info("serviceHandler newService: %v, nodeNums: %v", newService, len(newService.Nodes))
 		// append to the new set of cached services
 		newServices = append(newServices, newService)
 
@@ -156,6 +158,7 @@ func (cw *consulWatcher) serviceHandler(idx uint64, data interface{}) {
 				// no? then delete that shit
 				if !seen {
 					nodes = append(nodes, oldNode)
+					log.Info("serviceHandler delete node id: %v, address: %v", oldNode.Id, oldNode.Address)
 				}
 			}
 

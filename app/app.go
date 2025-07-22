@@ -578,34 +578,11 @@ func (app *DefaultApp) InvokeWithCleanup(module module.RPCModule, moduleType str
 	return
 }
 
-// 带清理功能的InvokeNR，当超时时会清理serverList缓存
-func (app *DefaultApp) InvokeNRWithCleanup(module module.RPCModule, moduleType string, _func string, params ...interface{}) (err error) {
-	server, e := app.GetRouteServer(moduleType)
-	if e != nil {
-		return e
-	}
-	err = server.CallNR(_func, params...)
-	if err != nil {
-		errStr := err.Error()
-		// 检查是否为超时或关闭，如果是则清理缓存
-		if errStr == "deadline exceeded" || errStr == "client closed" {
-			app.cleanupServerCache(server.GetNode().Id)
-		}
-	}
-	return
-}
-
 // 清理指定节点ID的服务器缓存，并联动清理selector缓存
 func (app *DefaultApp) cleanupServerCache(nodeID string) {
 	if session, ok := app.serverList.Load(nodeID); ok {
 		if s, ok := session.(module.ServerSession); ok {
-			serviceName := s.GetName()
 			s.GetRpc().Done()
-
-			// 联动清理selector缓存
-			if cs, ok := app.opts.Selector.(*cache.CacheSelector); ok {
-				cs.RemoveDeadNode(serviceName, nodeID)
-			}
 		}
 		app.serverList.Delete(nodeID)
 		log.Warning("Cleaned up dead server cache: %s", nodeID)
