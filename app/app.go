@@ -580,11 +580,10 @@ func (app *DefaultApp) InvokeWithCleanup(module module.RPCModule, moduleType str
 
 // 清理指定节点ID的服务器缓存，并联动清理selector缓存
 func (app *DefaultApp) cleanupServerCache(nodeID string) {
-	if session, ok := app.serverList.Load(nodeID); ok {
+	if session, ok := app.serverList.LoadAndDelete(nodeID); ok {
 		if s, ok := session.(module.ServerSession); ok {
 			s.GetRpc().Done()
 		}
-		app.serverList.Delete(nodeID)
 		log.Warning("Cleaned up dead server cache: %s", nodeID)
 	}
 }
