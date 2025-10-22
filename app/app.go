@@ -307,11 +307,15 @@ func (app *DefaultApp) GetRPCSerialize() map[string]module.RPCSerialize {
 // Watcher Watcher
 func (app *DefaultApp) Watcher(node *registry.Node) {
 	//把注销的服务ServerSession删除掉
+	if _, loaded := app.cleanupClaims.LoadOrStore(node.Id, struct{}{}); loaded {
+		return // 已有协程在清理或已清理过，避免重复 go版本升级后 可用LoadAndDelete替代该方案
+	}
 	session, ok := app.serverList.Load(node.Id)
 	if ok && session != nil {
 		session.(module.ServerSession).GetRpc().Done()
 		app.serverList.Delete(node.Id)
 	}
+	app.cleanupClaims.Delete(node.Id)
 }
 
 // Configure 重设应用配置
