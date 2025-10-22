@@ -262,6 +262,43 @@ func (c *CacheSelector) update(res *registry.Result) {
 	}
 }
 
+// MarkNodeUnhealthy 标记节点为不健康状态
+func (c *CacheSelector) MarkNodeUnhealthy(service string, nodeID string) {
+	c.Lock()
+	defer c.Unlock()
+
+	services, ok := c.cache[service]
+	if !ok {
+		return
+	}
+
+	// 找到对应的服务和节点
+	for i, svc := range services {
+		for j, node := range svc.Nodes {
+			if node.Id == nodeID {
+				log.Warning("Marking node %s as unhealthy in cache", nodeID)
+
+				// 从节点列表中移除该节点
+				services[i].Nodes = append(services[i].Nodes[:j], services[i].Nodes[j+1:]...)
+
+				// 如果服务没有节点了，删除整个服务缓存
+				if len(services[i].Nodes) == 0 {
+					if len(services) == 1 {
+						c.del(service)
+						return
+					} else {
+						// 移除空的服务
+						services = append(services[:i], services[i+1:]...)
+					}
+				}
+
+				c.set(service, services)
+				return
+			}
+		}
+	}
+}
+
 // run starts the cache watcher loop
 // it creates a new watcher if there's a problem
 // reloads the watcher if Init is called

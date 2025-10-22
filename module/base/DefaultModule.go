@@ -21,6 +21,7 @@ import (
 	"github.com/huyangv/vmqant/module"
 	"runtime"
 	"sync"
+	"time"
 )
 
 // DefaultModule 模块结构
@@ -60,4 +61,15 @@ func destroy(m *DefaultModule) {
 		}
 	}()
 	m.mi.OnDestroy()
+}
+
+// Heartbeat 心跳检测方法，用于健康检查
+func (m *DefaultModule) Heartbeat() (interface{}, string) {
+	// 返回当前时间戳作为心跳响应
+	return map[string]interface{}{
+		"timestamp": time.Now().Unix(),
+		"status":    "alive",
+		"type":      m.mi.GetType(),
+		"version":   m.mi.Version(),
+	}, ""
 }

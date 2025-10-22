@@ -56,6 +56,30 @@ func (p *protocolMarshalImp) GetData() []byte {
 	return p.data
 }
 
+// 心跳状态
+type NodeHeartbeat struct {
+	NodeID    string    `json:"node_id"`
+	Service   string    `json:"service"`
+	LastSeen  time.Time `json:"last_seen"`
+	IsAlive   bool      `json:"is_alive"`
+	FailCount int       `json:"fail_count"`
+	Address   string    `json:"address"`
+}
+
+// 心跳检测器
+type HeartbeatDetector struct {
+	app           module.App
+	heartbeats    sync.Map // map[string]*NodeHeartbeat
+	heartbeatChan chan *NodeHeartbeat
+	stopChan      chan bool
+	mutex         sync.RWMutex
+
+	// 心跳配置
+	interval     time.Duration
+	timeout      time.Duration
+	maxFailCount int
+}
+
 func newOptions(opts ...module.Option) module.Options {
 	var wdPath, confPath, Logdir, BIdir *string
 	var ProcessID *string
@@ -200,6 +224,9 @@ type DefaultApp struct {
 	startup             func(app module.App)
 	moduleInited        func(app module.App, module module.Module)
 	protocolMarshal     func(Trace string, Result interface{}, Error string) (module.ProtocolMarshal, string)
+
+	// 心跳检测器
+	heartbeatDetector *HeartbeatDetector
 }
 
 // Run 运行应用
@@ -236,6 +263,10 @@ func (app *DefaultApp) Run(mods ...module.Module) error {
 	if app.startup != nil {
 		app.startup(app)
 	}
+
+	// 启动心跳检测器
+	app.startHeartbeatDetector()
+
 	log.Info("mqant %v started", app.opts.Version)
 	// close
 	c := make(chan os.Signal, 1)
@@ -310,6 +341,7 @@ func (app *DefaultApp) Watcher(node *registry.Node) {
 	if _, loaded := app.cleanupClaims.LoadOrStore(node.Id, struct{}{}); loaded {
 		return // 已有协程在清理或已清理过，避免重复 go版本升级后 可用LoadAndDelete替代该方案
 	}
+	log.Warning("Watcher node id %v, node addr %v", node.Id, node.Address)
 	session, ok := app.serverList.Load(node.Id)
 	if ok && session != nil {
 		session.(module.ServerSession).GetRpc().Done()
@@ -448,6 +480,11 @@ func (app *DefaultApp) GetProcessID() string {
 // WorkDir 获取进程工作目录
 func (app *DefaultApp) WorkDir() string {
 	return app.opts.WorkDir
+}
+
+// GetServerList 获取服务器列表的访问接口
+func (app *DefaultApp) GetServerList() *sync.Map {
+	return &app.serverList
 }
 
 // Invoke Invoke
@@ -596,4 +633,155 @@ func (app *DefaultApp) cleanupServerCache(nodeID string) {
 		log.Warning("Cleaned up dead server cache: %s", nodeID)
 	}
 	app.cleanupClaims.Delete(nodeID)
+}
+
+// 启动心跳检测
+func (app *DefaultApp) startHeartbeatDetector() {
+	if app.heartbeatDetector != nil {
+		return // 已经启动
+	}
+
+	app.heartbeatDetector = &HeartbeatDetector{
+		app:           app,
+		heartbeats:    sync.Map{},
+		heartbeatChan: make(chan *NodeHeartbeat, 100),
+		stopChan:      make(chan bool),
+		interval:      5 * time.Second,  // 5秒检测一次
+		timeout:       10 * time.Second, // 10秒超时
+		maxFailCount:  3,                // 连续3次失败标记为死亡
+	}
+
+	// 启动心跳检测goroutine
+	go app.heartbeatDetector.run()
+
+	log.Info("Heartbeat detector started")
+}
+
+// 心跳检测主循环
+func (h *HeartbeatDetector) run() {
+	ticker := time.NewTicker(h.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-h.stopChan:
+			log.Info("Heartbeat detector stopped")
+			return
+		case <-ticker.C:
+			h.checkAllNodes()
+		case heartbeat := <-h.heartbeatChan:
+			h.updateHeartbeat(heartbeat)
+		}
+	}
+}
+
+// 检查所有节点心跳
+func (h *HeartbeatDetector) checkAllNodes() {
+	if app, ok := h.app.(*DefaultApp); ok {
+		app.serverList.Range(func(key, value interface{}) bool {
+			nodeID := key.(string)
+			session := value.(module.ServerSession)
+
+			go h.checkNodeHeartbeat(nodeID, session)
+			return true
+		})
+	}
+}
+
+// 检查单个节点心跳
+func (h *HeartbeatDetector) checkNodeHeartbeat(nodeID string, session module.ServerSession) {
+	ctx, cancel := context.WithTimeout(context.Background(), h.timeout)
+	defer cancel()
+
+	// 尝试发送心跳请求，使用Heartbeat()方法
+	_, err := session.Call(ctx, "Heartbeat")
+	if err != "" {
+		h.reportHeartbeat(&NodeHeartbeat{
+			NodeID:    nodeID,
+			Service:   h.getServiceName(session),
+			LastSeen:  time.Now(),
+			IsAlive:   false,
+			FailCount: h.getFailCount(nodeID) + 1,
+			Address:   h.getNodeAddress(session),
+		})
+	} else {
+		h.reportHeartbeat(&NodeHeartbeat{
+			NodeID:    nodeID,
+			Service:   h.getServiceName(session),
+			LastSeen:  time.Now(),
+			IsAlive:   true,
+			FailCount: 0,
+			Address:   h.getNodeAddress(session),
+		})
+	}
+}
+
+// 报告心跳状态
+func (h *HeartbeatDetector) reportHeartbeat(heartbeat *NodeHeartbeat) {
+	h.heartbeatChan <- heartbeat
+}
+
+// 更新心跳状态
+func (h *HeartbeatDetector) updateHeartbeat(heartbeat *NodeHeartbeat) {
+	// 更新内存中的心跳状态
+	h.heartbeats.Store(heartbeat.NodeID, heartbeat)
+
+	// 检查是否需要清理缓存
+	if !heartbeat.IsAlive && heartbeat.FailCount >= h.maxFailCount {
+		log.Warning("Node %s detected as dead (fail count: %d), cleaning cache",
+			heartbeat.NodeID, heartbeat.FailCount)
+
+		// 通知选择器标记节点为不健康
+		h.app.Options().Selector.MarkNodeUnhealthy(heartbeat.Service, heartbeat.NodeID)
+
+		// 通知应用清理缓存
+		if app, ok := h.app.(*DefaultApp); ok {
+			app.cleanupServerCache(heartbeat.NodeID)
+		}
+	}
+}
+
+// 获取节点失败计数
+func (h *HeartbeatDetector) getFailCount(nodeID string) int {
+	if hb, ok := h.heartbeats.Load(nodeID); ok {
+		return hb.(*NodeHeartbeat).FailCount
+	}
+	return 0
+}
+
+// 获取服务名
+func (h *HeartbeatDetector) getServiceName(session module.ServerSession) string {
+	if node := session.GetNode(); node != nil {
+		// 从metadata中获取服务名，或者从ID解析
+		if service, ok := node.Metadata["service"]; ok {
+			return service
+		}
+		// 尝试从ID解析服务名
+		parts := strings.Split(node.Id, "@")
+		if len(parts) > 0 {
+			return parts[0]
+		}
+	}
+	return "unknown"
+}
+
+// 获取节点地址
+func (h *HeartbeatDetector) getNodeAddress(session module.ServerSession) string {
+	if node := session.GetNode(); node != nil {
+		return node.Address
+	}
+	return ""
+}
+
+// 获取节点心跳状态
+func (h *HeartbeatDetector) GetNodeHeartbeat(nodeID string) (*NodeHeartbeat, bool) {
+	if hb, ok := h.heartbeats.Load(nodeID); ok {
+		return hb.(*NodeHeartbeat), true
+	}
+	return nil, false
+}
+
+// 停止心跳检测
+func (h *HeartbeatDetector) Stop() {
+	close(h.stopChan)
 }

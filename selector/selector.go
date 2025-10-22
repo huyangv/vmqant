@@ -26,6 +26,9 @@ type Selector interface {
 	Close() error
 	// Name of the selector
 	String() string
+
+	// MarkNodeUnhealthy marks a node as unhealthy and removes it from cache
+	MarkNodeUnhealthy(service string, nodeID string)
 }
 
 // Next is a function that returns the next node

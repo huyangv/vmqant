@@ -69,6 +69,11 @@ func (r *defaultSelector) String() string {
 	return "default"
 }
 
+func (r *defaultSelector) MarkNodeUnhealthy(service string, nodeID string) {
+	// 默认选择器不做任何操作，由缓存选择器处理
+	return
+}
+
 func newDefaultSelector(opts ...Option) Selector {
 	sopts := Options{
 		Strategy: Random,

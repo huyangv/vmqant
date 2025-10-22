@@ -154,6 +154,9 @@ type RPCModule interface {
 	*/
 	GetRouteServer(filter string, opts ...selector.SelectOption) (ServerSession, error)
 	GetExecuting() int64
+
+	// 心跳检测方法，用于健康检查
+	Heartbeat() (interface{}, string)
 }
 
 // RPCSerialize 自定义参数序列化接口
