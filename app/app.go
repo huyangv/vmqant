@@ -646,9 +646,9 @@ func (app *DefaultApp) startHeartbeatDetector() {
 		heartbeats:    sync.Map{},
 		heartbeatChan: make(chan *NodeHeartbeat, 100),
 		stopChan:      make(chan bool),
-		interval:      5 * time.Second,  // 5秒检测一次
-		timeout:       10 * time.Second, // 10秒超时
-		maxFailCount:  3,                // 连续3次失败标记为死亡
+		interval:      5 * time.Second, // 5秒检测一次
+		timeout:       3 * time.Second, // 3秒超时
+		maxFailCount:  3,               // 连续3次失败标记为死亡
 	}
 
 	// 启动心跳检测goroutine
@@ -694,14 +694,19 @@ func (h *HeartbeatDetector) checkNodeHeartbeat(nodeID string, session module.Ser
 	defer cancel()
 
 	// 尝试发送心跳请求，使用Heartbeat()方法
-	_, err := session.Call(ctx, "Heartbeat")
+	_, err := session.Call(ctx, "RpcHeartbeat")
 	if err != "" {
+		log.Error("Heartbeat failed for node %s: %s", nodeID, err)
+		addFailCount := 1
+		if err == "client closed" { // 已关闭则最大失败次数
+			addFailCount = 3
+		}
 		h.reportHeartbeat(&NodeHeartbeat{
 			NodeID:    nodeID,
 			Service:   h.getServiceName(session),
 			LastSeen:  time.Now(),
 			IsAlive:   false,
-			FailCount: h.getFailCount(nodeID) + 1,
+			FailCount: h.getFailCount(nodeID) + addFailCount,
 			Address:   h.getNodeAddress(session),
 		})
 	} else {
