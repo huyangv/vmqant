@@ -16,12 +16,13 @@
 package basemodule
 
 import (
-	"github.com/huyangv/vmqant/conf"
-	"github.com/huyangv/vmqant/log"
-	"github.com/huyangv/vmqant/module"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/huyangv/vmqant/conf"
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
 )
 
 // DefaultModule 模块结构

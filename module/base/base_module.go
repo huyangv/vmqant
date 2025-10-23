@@ -19,6 +19,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/huyangv/vmqant/conf"
 	"github.com/huyangv/vmqant/log"
@@ -131,6 +132,10 @@ func (m *BaseModule) OnInit(subclass module.RPCModule, app module.App, settings 
 	if err != nil {
 		log.Warning("server OnInit fail id(%s) error(%s)", m.GetServerID(), err)
 	}
+
+	// 注册默认的RPC方法
+	m.registerDefaultRPCs(server)
+
 	hostname, _ := os.Hostname()
 	server.Options().Metadata["hostname"] = hostname
 	server.Options().Metadata["pid"] = fmt.Sprintf("%v", os.Getpid())
@@ -295,4 +300,17 @@ func (m *BaseModule) OnComplete(fn string, callInfo *mqrpc.CallInfo, result *rpc
 func (m *BaseModule) GetExecuting() int64 {
 	return 0
 	//return m.GetServer().GetRPCServer().GetExecuting()
+}
+
+// registerDefaultRPCs 注册默认的RPC方法
+func (m *BaseModule) registerDefaultRPCs(server server.Server) {
+	// 注册心跳检测RPC
+	server.Register("RpcHeartbeat", func() (interface{}, string) {
+		// 默认实现
+		return map[string]interface{}{
+			"timestamp": time.Now().Unix(),
+			"type":      m.GetSubclass().GetType(),
+			"version":   m.GetSubclass().Version(),
+		}, ""
+	})
 }
