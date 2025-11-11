@@ -37,13 +37,14 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/json-iterator/go"
 	"log"
 	"os"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	jsoniter "github.com/json-iterator/go"
 )
 
 // RFC5424 log message levels.
@@ -313,16 +314,40 @@ func (bl *BeeLogger) setLogger(adapterName string, configs ...string) error {
 	return nil
 }
 
+// LoggerConfig defines the configuration for a logger
+// including async settings
+type LoggerConfig struct {
+	Async     bool  `json:"async"`
+	AsyncSize int64 `json:"async_size,omitempty"`
+	// Other config fields will be passed to the logger adapter
+}
+
 // SetLogger provides a given logger adapter into BeeLogger with config string.
 // config need to be correct JSON as string: {"interval":360}.
 func (bl *BeeLogger) SetLogger(adapterName string, configs ...string) error {
 	bl.lock.Lock()
-	defer bl.lock.Unlock()
 	if !bl.init {
 		bl.outputs = []*nameLogger{}
 		bl.init = true
 	}
-	return bl.setLogger(adapterName, configs...)
+	err := bl.setLogger(adapterName, configs...)
+	bl.lock.Unlock()
+	if err != nil {
+		return err
+	}
+
+	// Parse logger config
+	config := append(configs, "{}")[0]
+	var loggerCfg LoggerConfig
+	if err := json.Unmarshal([]byte(config), &loggerCfg); err != nil {
+		return fmt.Errorf("invalid logger config: %v", err)
+	}
+
+	// If async is enabled, configure it
+	if loggerCfg.Async {
+		bl.Async(loggerCfg.AsyncSize)
+	}
+	return nil
 }
 
 // DelLogger remove a logger adapter in BeeLogger.
