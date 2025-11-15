@@ -23,15 +23,13 @@ import (
 	"github.com/huyangv/vmqant/module"
 	mqrpc "github.com/huyangv/vmqant/rpc"
 	rpcpb "github.com/huyangv/vmqant/rpc/pb"
-	mqanttools "github.com/huyangv/vmqant/utils"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
 )
 
 type NatsClient struct {
 	//callinfos map[string]*ClinetCallInfo
-	callinfos         *mqanttools.BeeMap
-	cmutex            sync.Mutex //操作callinfos的锁
+	callinfos         sync.Map // 使用 sync.Map 替代 BeeMap，提升并发性能
 	callbackqueueName string
 	app               module.App
 	done              chan error
@@ -44,7 +42,6 @@ func NewNatsClient(app module.App, session module.ServerSession) (client *NatsCl
 	client = new(NatsClient)
 	client.session = session
 	client.app = app
-	client.callinfos = mqanttools.NewBeeMap()
 	client.callbackqueueName = nats.NewInbox()
 	client.done = make(chan error)
 	client.isClose = false
@@ -71,15 +68,16 @@ func (c *NatsClient) Done() (err error) {
 	//c.send_done<-nil
 
 	//清理 callinfos 列表
-	for key, clinetCallInfo := range c.callinfos.Items() {
-		if clinetCallInfo != nil {
+	c.callinfos.Range(func(key, value interface{}) bool {
+		if value != nil {
+			clinetCallInfo := value.(ClinetCallInfo)
 			//关闭管道
-			c.CloseFch(clinetCallInfo.(ClinetCallInfo).call)
+			c.CloseFch(clinetCallInfo.call)
 			//从Map中删除
 			c.callinfos.Delete(key)
 		}
-	}
-	c.callinfos = nil
+		return true // 继续遍历
+	})
 	c.done <- nil
 	c.isClose = true
 	return
@@ -91,18 +89,18 @@ func (c *NatsClient) Done() (err error) {
 */
 func (c *NatsClient) Call(callInfo *mqrpc.CallInfo, callback chan *rpcpb.ResultInfo) error {
 	//var err error
-	if c.callinfos == nil {
+	if c.isClose {
 		return fmt.Errorf("AMQPClient is closed")
 	}
 	callInfo.RPCInfo.ReplyTo = c.callbackqueueName
 	var correlation_id = callInfo.RPCInfo.Cid
 
-	clinetCallInfo := &ClinetCallInfo{
+	clinetCallInfo := ClinetCallInfo{
 		correlation_id: correlation_id,
 		call:           callback,
 		timeout:        callInfo.RPCInfo.Expired,
 	}
-	c.callinfos.Set(correlation_id, *clinetCallInfo)
+	c.callinfos.Store(correlation_id, clinetCallInfo)
 	body, err := c.Marshal(callInfo.RPCInfo)
 	if err != nil {
 		return err
@@ -189,11 +187,9 @@ func (c *NatsClient) on_request_handle() (err error) {
 			log.Error("Unmarshal faild", err)
 		} else {
 			correlation_id := resultInfo.Cid
-			clinetCallInfo := c.callinfos.Get(correlation_id)
-			//删除
-			c.callinfos.Delete(correlation_id)
-			if clinetCallInfo != nil {
-				c.PushResultToChan(clinetCallInfo.(ClinetCallInfo), resultInfo)
+			if val, ok := c.callinfos.LoadAndDelete(correlation_id); ok {
+				clinetCallInfo := val.(ClinetCallInfo)
+				c.PushResultToChan(clinetCallInfo, resultInfo)
 			} else {
 				//可能客户端已超时了，但服务端处理完还给回调了
 				log.Warning("rpc callback no found : [%s]", correlation_id)
@@ -247,11 +243,8 @@ func (c *NatsClient) Unmarshal(data []byte) (*rpcpb.RPCInfo, error) {
 	err := proto.Unmarshal(data, &rpcInfo)
 	if err != nil {
 		return nil, err
-	} else {
-		return &rpcInfo, err
 	}
-
-	panic("bug")
+	return &rpcInfo, nil
 }
 
 // goroutine safe
