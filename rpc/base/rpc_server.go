@@ -16,16 +16,24 @@ package defaultrpc
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/huyangv/vmqant/log"
-	"github.com/huyangv/vmqant/module"
-	"github.com/huyangv/vmqant/rpc"
-	"github.com/huyangv/vmqant/rpc/pb"
-	"github.com/huyangv/vmqant/rpc/util"
-	"google.golang.org/protobuf/proto"
 	"reflect"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
+	mqrpc "github.com/huyangv/vmqant/rpc"
+	rpcpb "github.com/huyangv/vmqant/rpc/pb"
+	argsutil "github.com/huyangv/vmqant/rpc/util"
+	"google.golang.org/protobuf/proto"
+)
+
+const (
+	// 性能日志阈值
+	logThresholdShort  = 10 * time.Millisecond  // 短操作阈值（如参数解析、BeforeHandle等）
+	logThresholdMedium = 50 * time.Millisecond  // 中等操作阈值（如总延迟）
+	logThresholdLong   = 100 * time.Millisecond // 长操作阈值（如业务函数执行）
 )
 
 type RPCServer struct {
@@ -206,6 +214,10 @@ func (s *RPCServer) _errorCallback(start time.Time, callInfo *mqrpc.CallInfo, Ci
 }
 
 func (s *RPCServer) _runFunc(start time.Time, functionInfo *mqrpc.FunctionInfo, callInfo *mqrpc.CallInfo) {
+	goroutineStartDelay := time.Since(start)
+	if goroutineStartDelay >= logThresholdShort {
+		log.TInfo(nil, "[RPC_SERVER] _runFunc START Cid=%s Func=%s GoroutineStartDelay=%v", callInfo.RPCInfo.Cid, callInfo.RPCInfo.Fn, goroutineStartDelay)
+	}
 	f := functionInfo.Function
 	fType := functionInfo.FuncType
 	fInType := functionInfo.InType
@@ -246,6 +258,7 @@ func (s *RPCServer) _runFunc(start time.Time, functionInfo *mqrpc.FunctionInfo, 
 	//t:=RandInt64(2,3)
 	//time.Sleep(time.Second*time.Duration(t))
 	// f 为函数地址
+	t1 := time.Now()
 	var in []reflect.Value
 	var input []interface{}
 	if len(ArgsType) > 0 {
@@ -326,16 +339,34 @@ func (s *RPCServer) _runFunc(start time.Time, functionInfo *mqrpc.FunctionInfo, 
 			}
 		}
 	}
+	parseElapsed := time.Since(t1)
+	if parseElapsed >= logThresholdShort {
+		log.TInfo(nil, "[RPC_SERVER] _runFunc PARSE_ARGS_COMPLETE Cid=%s Func=%s ParseElapsed=%v", callInfo.RPCInfo.Cid, callInfo.RPCInfo.Fn, parseElapsed)
+	}
 
+	t3 := time.Now()
 	if s.listener != nil {
 		errs := s.listener.BeforeHandle(callInfo.RPCInfo.Fn, callInfo)
+		beforeHandleElapsed := time.Since(t3)
+		if beforeHandleElapsed >= logThresholdShort {
+			log.TInfo(nil, "[RPC_SERVER] _runFunc BEFORE_HANDLE Cid=%s Func=%s Elapsed=%v", callInfo.RPCInfo.Cid, callInfo.RPCInfo.Fn, beforeHandleElapsed)
+		}
 		if errs != nil {
 			s._errorCallback(start, callInfo, callInfo.RPCInfo.Cid, errs.Error())
 			return
 		}
 	}
 
+	t5 := time.Now()
+	totalDelay := time.Since(start)
+	if totalDelay >= logThresholdMedium {
+		log.TInfo(nil, "[RPC_SERVER] _runFunc BUSINESS_FUNC_START Cid=%s Func=%s TotalDelay=%v (from Invoke to business func)", callInfo.RPCInfo.Cid, callInfo.RPCInfo.Fn, totalDelay)
+	}
 	out := f.Call(in)
+	businessElapsed := time.Since(t5)
+	if businessElapsed >= logThresholdLong {
+		log.TInfo(nil, "[RPC_SERVER] _runFunc BUSINESS_FUNC_COMPLETE Cid=%s Func=%s BusinessElapsed=%v", callInfo.RPCInfo.Cid, callInfo.RPCInfo.Fn, businessElapsed)
+	}
 	var rs []interface{}
 	if len(out) != 2 {
 		s._errorCallback(start, callInfo, callInfo.RPCInfo.Cid, fmt.Sprintf("%s rpc func(%s) return error %s\n", s.module.GetType(), callInfo.RPCInfo.Fn, "func(....)(result interface{}, err error)"))
@@ -403,10 +434,16 @@ func (s *RPCServer) runFunc(callInfo *mqrpc.CallInfo) {
 		}
 	}()
 
+	t1 := time.Now()
 	if s.control != nil {
 		//协程数量达到最大限制
 		s.control.Wait()
+		elapsed1 := time.Since(t1)
+		if elapsed1 >= logThresholdShort {
+			log.TInfo(nil, "[RPC_SERVER] runFunc CONTROL_WAIT Cid=%s Func=%s Elapsed=%v", callInfo.RPCInfo.Cid, callInfo.RPCInfo.Fn, elapsed1)
+		}
 	}
+	t2 := time.Now()
 	functionInfo, ok := s.functions[callInfo.RPCInfo.Fn]
 	if !ok {
 		if s.listener != nil {
@@ -418,9 +455,22 @@ func (s *RPCServer) runFunc(callInfo *mqrpc.CallInfo) {
 			functionInfo = fInfo
 		}
 	}
+	findElapsed := time.Since(t2)
+	if findElapsed >= logThresholdShort {
+		log.TInfo(nil, "[RPC_SERVER] runFunc FUNCTION_FOUND Cid=%s Func=%s Goroutine=%v FindElapsed=%v", callInfo.RPCInfo.Cid, callInfo.RPCInfo.Fn, functionInfo.Goroutine, findElapsed)
+	}
+	t3 := time.Now()
 	if functionInfo.Goroutine {
 		go s._runFunc(start, functionInfo, callInfo)
+		startElapsed := time.Since(t3)
+		if startElapsed >= logThresholdShort {
+			log.TInfo(nil, "[RPC_SERVER] runFunc GOROUTINE_STARTED Cid=%s Func=%s StartElapsed=%v", callInfo.RPCInfo.Cid, callInfo.RPCInfo.Fn, startElapsed)
+		}
 	} else {
 		s._runFunc(start, functionInfo, callInfo)
+	}
+	totalElapsed := time.Since(start)
+	if totalElapsed >= logThresholdShort {
+		log.TInfo(nil, "[RPC_SERVER] runFunc RETURN Cid=%s Func=%s TotalElapsed=%v", callInfo.RPCInfo.Cid, callInfo.RPCInfo.Fn, totalElapsed)
 	}
 }

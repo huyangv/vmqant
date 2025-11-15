@@ -88,15 +88,29 @@ func (c *RPCClient) CallArgs(ctx context.Context, _func string, ArgsType []strin
 	//if c.local_client != nil {
 	//	err = c.local_client.Call(*callInfo, callback)
 	//} else
+	t1 := time.Now()
 	err = c.nats_client.Call(callInfo, callback)
+	elapsed1 := time.Since(t1)
 	if err != nil {
+		if elapsed1 >= logThresholdShort {
+			log.TInfo(nil, "[RPC_CLIENT] CallArgs PUBLISH_ERROR Cid=%s Func=%s Elapsed=%v Error=%s", correlation_id, _func, elapsed1, err.Error())
+		}
 		return nil, err.Error()
+	}
+	if elapsed1 >= logThresholdShort {
+		log.TInfo(nil, "[RPC_CLIENT] CallArgs PUBLISH_OK Cid=%s Func=%s Elapsed=%v", correlation_id, _func, elapsed1)
 	}
 	if ctx == nil {
 		ctx, _ = context.WithTimeout(context.TODO(), c.app.Options().RPCExpired)
 	}
+	t2 := time.Now()
 	select {
 	case resultInfo, ok := <-callback:
+		waitElapsed := time.Since(t2)
+		totalElapsed := time.Since(start)
+		if waitElapsed >= logThresholdMedium || totalElapsed >= logThresholdMedium {
+			log.TInfo(nil, "[RPC_CLIENT] CallArgs RECEIVED Cid=%s Func=%s WaitElapsed=%v TotalElapsed=%v", correlation_id, _func, waitElapsed, totalElapsed)
+		}
 		if !ok {
 			return nil, "client closed"
 		}
@@ -104,10 +118,18 @@ func (c *RPCClient) CallArgs(ctx context.Context, _func string, ArgsType []strin
 		if err != nil {
 			return nil, err.Error()
 		}
+		if totalElapsed >= logThresholdMedium {
+			log.TInfo(nil, "[RPC_CLIENT] CallArgs COMPLETE Cid=%s Func=%s TotalElapsed=%v", correlation_id, _func, totalElapsed)
+		}
 		return result, resultInfo.Error
 	case <-ctx.Done():
 		c.close_callback_chan(callback)
 		c.nats_client.Delete(rpcInfo.Cid)
+		waitElapsed := time.Since(t2)
+		totalElapsed := time.Since(start)
+		if waitElapsed >= logThresholdMedium || totalElapsed >= logThresholdMedium {
+			log.TInfo(nil, "[RPC_CLIENT] CallArgs TIMEOUT Cid=%s Func=%s WaitElapsed=%v TotalElapsed=%v", correlation_id, _func, waitElapsed, totalElapsed)
+		}
 		return nil, "deadline exceeded"
 		//case <-time.After(time.Second * time.Duration(c.app.GetSettings().rpc.RPCExpired)):
 		//	close(callback)

@@ -15,15 +15,16 @@ package defaultrpc
 
 import (
 	"fmt"
-	"github.com/huyangv/vmqant/log"
-	"github.com/huyangv/vmqant/module"
-	"github.com/huyangv/vmqant/rpc"
-	"github.com/huyangv/vmqant/rpc/pb"
-	"github.com/nats-io/nats.go"
-	"google.golang.org/protobuf/proto"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
+	mqrpc "github.com/huyangv/vmqant/rpc"
+	rpcpb "github.com/huyangv/vmqant/rpc/pb"
+	"github.com/nats-io/nats.go"
+	"google.golang.org/protobuf/proto"
 )
 
 type NatsServer struct {
@@ -167,6 +168,7 @@ func (s *NatsServer) on_request_handle() (err error) {
 			continue
 		}
 
+		t0 := time.Now()
 		rpcInfo, err := s.Unmarshal(m.Data)
 		if err == nil {
 			callInfo := &mqrpc.CallInfo{
@@ -178,7 +180,16 @@ func (s *NatsServer) on_request_handle() (err error) {
 
 			callInfo.Agent = s //设置代理为NatsServer
 
+			unmarshalElapsed := time.Since(t0)
+			if unmarshalElapsed >= logThresholdShort {
+				log.TInfo(nil, "[RPC_SERVER] RECEIVED_MSG Cid=%s Func=%s UnmarshalElapsed=%v", rpcInfo.Cid, rpcInfo.Fn, unmarshalElapsed)
+			}
+			t2 := time.Now()
 			s.server.Call(callInfo)
+			callElapsed := time.Since(t2)
+			if callElapsed >= logThresholdShort {
+				log.TInfo(nil, "[RPC_SERVER] CALL_RETURNED Cid=%s Func=%s CallElapsed=%v", rpcInfo.Cid, rpcInfo.Fn, callElapsed)
+			}
 		} else {
 			fmt.Println("error ", err)
 		}
