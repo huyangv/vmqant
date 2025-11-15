@@ -98,20 +98,12 @@ func (s *NatsServer) Shutdown() (err error) {
 }
 
 func (s *NatsServer) Callback(callinfo *mqrpc.CallInfo) error {
-	t1 := time.Now()
 	body, err := s.MarshalResult(callinfo.Result)
 	if err != nil {
 		return err
 	}
-	marshalElapsed := time.Since(t1)
 	reply_to := callinfo.Props["reply_to"].(string)
-	t2 := time.Now()
-	err = s.app.Transport().Publish(reply_to, body)
-	publishElapsed := time.Since(t2)
-	if marshalElapsed >= logThresholdShort || publishElapsed >= logThresholdShort {
-		log.TInfo(nil, "[RPC_SERVER] Callback PUBLISH Cid=%s ReplyTo=%s MarshalElapsed=%v PublishElapsed=%v", callinfo.RPCInfo.Cid, reply_to, marshalElapsed, publishElapsed)
-	}
-	return err
+	return s.app.Transport().Publish(reply_to, body)
 }
 
 /*
@@ -150,7 +142,12 @@ func (s *NatsServer) on_request_handle() (err error) {
 	}()
 
 	for !s.isClose {
+		t_msg_wait := time.Now()
 		m, err := s.subs.NextMsg(time.Minute)
+		msgWaitElapsed := time.Since(t_msg_wait)
+		if msgWaitElapsed >= logThresholdShort {
+			log.TInfo(nil, "[RPC_SERVER] NextMsg WAIT Elapsed=%v", msgWaitElapsed)
+		}
 		if err != nil && err == nats.ErrTimeout {
 			//fmt.Println(err.Error())
 			//log.Warning("NatsServer error with '%v'",err)
@@ -179,6 +176,7 @@ func (s *NatsServer) on_request_handle() (err error) {
 		t0 := time.Now()
 		rpcInfo, err := s.Unmarshal(m.Data)
 		if err == nil {
+			unmarshalElapsed := time.Since(t0)
 			callInfo := &mqrpc.CallInfo{
 				RPCInfo: rpcInfo,
 			}
@@ -188,7 +186,6 @@ func (s *NatsServer) on_request_handle() (err error) {
 
 			callInfo.Agent = s //设置代理为NatsServer
 
-			unmarshalElapsed := time.Since(t0)
 			if unmarshalElapsed >= logThresholdShort {
 				log.TInfo(nil, "[RPC_SERVER] RECEIVED_MSG Cid=%s Func=%s UnmarshalElapsed=%v", rpcInfo.Cid, rpcInfo.Fn, unmarshalElapsed)
 			}

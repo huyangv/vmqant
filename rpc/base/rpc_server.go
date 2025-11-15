@@ -176,12 +176,7 @@ func (s *RPCServer) Call(callInfo *mqrpc.CallInfo) error {
 func (s *RPCServer) doCallback(callInfo *mqrpc.CallInfo) {
 	if callInfo.RPCInfo.Reply {
 		//需要回复的才回复
-		t1 := time.Now()
 		err := callInfo.Agent.(mqrpc.MQServer).Callback(callInfo)
-		callbackElapsed := time.Since(t1)
-		if callbackElapsed >= logThresholdShort {
-			log.TInfo(nil, "[RPC_SERVER] doCallback Cid=%s Func=%s CallbackElapsed=%v", callInfo.RPCInfo.Cid, callInfo.RPCInfo.Fn, callbackElapsed)
-		}
 		if err != nil {
 			log.Warning("rpc callback erro :\n%s", err.Error())
 		}
