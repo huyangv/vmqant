@@ -182,14 +182,21 @@ func (c *NatsClient) on_request_handle() (err error) {
 			continue
 		}
 
+		t0 := time.Now()
 		resultInfo, err := c.UnmarshalResult(m.Data)
 		if err != nil {
 			log.Error("Unmarshal faild", err)
 		} else {
+			receiveElapsed := time.Since(t0)
 			correlation_id := resultInfo.Cid
 			if val, ok := c.callinfos.LoadAndDelete(correlation_id); ok {
 				clinetCallInfo := val.(ClinetCallInfo)
+				t1 := time.Now()
 				c.PushResultToChan(clinetCallInfo, resultInfo)
+				pushElapsed := time.Since(t1)
+				if receiveElapsed >= logThresholdShort || pushElapsed >= logThresholdShort {
+					log.TInfo(nil, "[RPC_CLIENT] RECEIVED_RESPONSE Cid=%s UnmarshalElapsed=%v PushElapsed=%v", correlation_id, receiveElapsed, pushElapsed)
+				}
 			} else {
 				//可能客户端已超时了，但服务端处理完还给回调了
 				log.Warning("rpc callback no found : [%s]", correlation_id)
