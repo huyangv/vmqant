@@ -3,6 +3,7 @@ package cache
 
 import (
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/huyangv/vmqant/log"
@@ -10,16 +11,19 @@ import (
 	"github.com/huyangv/vmqant/selector"
 )
 
+// serviceCacheEntry 封装服务的缓存信息
+type serviceCacheEntry struct {
+	services []*registry.Service
+	ttl      atomic.Value // time.Time，使用原子操作保证线程安全
+	watched  atomic.Bool  // bool，使用原子操作保证线程安全
+}
+
 type CacheSelector struct {
 	so  selector.Options
 	ttl time.Duration
 
-	// registry cache
-	sync.Mutex
-	cache map[string][]*registry.Service
-	ttls  map[string]time.Time
-
-	watched map[string]bool
+	// registry cache - 使用 sync.Map 实现无锁并发访问
+	cache sync.Map // map[string]*serviceCacheEntry
 
 	// used to close or reload watcher
 	reload chan bool
@@ -76,20 +80,10 @@ func (c *CacheSelector) cp(current []*registry.Service) []*registry.Service {
 }
 
 func (c *CacheSelector) del(service string) {
-	delete(c.cache, service)
-	delete(c.ttls, service)
+	c.cache.Delete(service)
 }
 
 func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
-	c.Lock()
-	defer c.Unlock()
-
-	// watch service if not watched
-	if _, ok := c.watched[service]; !ok {
-		go c.run(service)
-		c.watched[service] = true
-	}
-
 	// get does the actual request for a service
 	// it also caches it
 	get := func(service string) ([]*registry.Service, error) {
@@ -105,19 +99,41 @@ func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 	}
 
 	// check the cache first
-	services, ok := c.cache[service]
-
-	// cache miss or no services
-	if !ok || len(services) == 0 {
+	val, ok := c.cache.Load(service)
+	if !ok {
+		// cache miss - need to watch and get service
+		entry := &serviceCacheEntry{
+			services: nil,
+		}
+		entry.ttl.Store(time.Time{})
+		entry.watched.Store(true)
+		c.cache.Store(service, entry)
+		go c.run(service)
 		return get(service)
 	}
 
-	// got cache but lets check ttl
-	ttl, kk := c.ttls[service]
+	entry := val.(*serviceCacheEntry)
 
-	// within ttl so return cache
-	if kk && time.Since(ttl) < c.ttl {
-		return c.cp(services), nil
+	// watch service if not watched - 使用原子操作检查和设置
+	if !entry.watched.Load() {
+		// 原子性地设置为 true，即使多个 goroutine 同时执行也没问题
+		// run() 方法内部会处理重复启动的情况
+		entry.watched.Store(true)
+		go c.run(service)
+	}
+
+	// cache miss or no services
+	if len(entry.services) == 0 {
+		return get(service)
+	}
+
+	// got cache but lets check ttl - 使用原子操作读取
+	ttlVal := entry.ttl.Load()
+	if ttlVal != nil {
+		ttl := ttlVal.(time.Time)
+		if !ttl.IsZero() && time.Since(ttl) < c.ttl {
+			return c.cp(entry.services), nil
+		}
 	}
 
 	// expired entry so get service
@@ -135,12 +151,24 @@ func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 
 	// other error
 	// return expired cache as last resort
-	return c.cp(services), nil
+	return c.cp(entry.services), nil
 }
 
 func (c *CacheSelector) set(service string, services []*registry.Service) {
-	c.cache[service] = services
-	c.ttls[service] = time.Now().Add(c.ttl)
+	val, ok := c.cache.Load(service)
+	var entry *serviceCacheEntry
+	if ok {
+		entry = val.(*serviceCacheEntry)
+		entry.services = services
+		entry.ttl.Store(time.Now().Add(c.ttl))
+	} else {
+		entry = &serviceCacheEntry{
+			services: services,
+		}
+		entry.ttl.Store(time.Now().Add(c.ttl))
+		entry.watched.Store(false)
+	}
+	c.cache.Store(service, entry)
 }
 
 func (c *CacheSelector) update(res *registry.Result) {
@@ -148,15 +176,17 @@ func (c *CacheSelector) update(res *registry.Result) {
 		return
 	}
 
-	c.Lock()
-	defer c.Unlock()
-
-	services, ok := c.cache[res.Service.Name]
+	val, ok := c.cache.Load(res.Service.Name)
 	if !ok {
 		// we're not going to cache anything
 		// unless there was already a lookup
 		return
 	}
+
+	entry := val.(*serviceCacheEntry)
+	// 创建 services 切片的副本，避免直接修改共享数据
+	services := make([]*registry.Service, len(entry.services))
+	copy(services, entry.services)
 
 	if len(res.Service.Nodes) == 0 {
 		switch res.Action {
@@ -264,13 +294,15 @@ func (c *CacheSelector) update(res *registry.Result) {
 
 // MarkNodeUnhealthy 标记节点为不健康状态
 func (c *CacheSelector) MarkNodeUnhealthy(service string, nodeID string) {
-	c.Lock()
-	defer c.Unlock()
-
-	services, ok := c.cache[service]
+	val, ok := c.cache.Load(service)
 	if !ok {
 		return
 	}
+
+	entry := val.(*serviceCacheEntry)
+	// 创建 services 切片的副本，避免直接修改共享数据
+	services := make([]*registry.Service, len(entry.services))
+	copy(services, entry.services)
 
 	// 找到对应的服务和节点
 	for i, svc := range services {
@@ -430,10 +462,11 @@ func (c *CacheSelector) Reset(service string) {
 
 // Close stops the watcher and destroys the cache
 func (c *CacheSelector) Close() error {
-	c.Lock()
-	c.cache = make(map[string][]*registry.Service)
-	c.watched = make(map[string]bool)
-	c.Unlock()
+	// 清空所有缓存
+	c.cache.Range(func(key, value interface{}) bool {
+		c.cache.Delete(key)
+		return true
+	})
 
 	select {
 	case <-c.exit:
@@ -470,24 +503,18 @@ func NewSelector(opts ...selector.Option) selector.Selector {
 	}
 
 	return &CacheSelector{
-		so:      sopts,
-		ttl:     ttl,
-		watched: make(map[string]bool),
-		cache:   make(map[string][]*registry.Service),
-		ttls:    make(map[string]time.Time),
-		reload:  make(chan bool, 1),
-		exit:    make(chan bool),
+		so:     sopts,
+		ttl:    ttl,
+		cache:  sync.Map{},
+		reload: make(chan bool, 1),
+		exit:   make(chan bool),
 	}
 }
 
 // 强制刷新指定服务的缓存
 func (c *CacheSelector) ForceRefresh(service string) error {
-	c.Lock()
-	defer c.Unlock()
-
 	// 删除缓存，强制下次获取时从注册中心重新拉取
-	delete(c.cache, service)
-	delete(c.ttls, service)
+	c.cache.Delete(service)
 
 	log.Info("Force refreshed cache for service: %s", service)
 	return nil
@@ -495,13 +522,15 @@ func (c *CacheSelector) ForceRefresh(service string) error {
 
 // 从缓存中移除死节点
 func (c *CacheSelector) RemoveDeadNode(service string, nodeID string) {
-	c.Lock()
-	defer c.Unlock()
-
-	services, ok := c.cache[service]
+	val, ok := c.cache.Load(service)
 	if !ok {
 		return
 	}
+
+	entry := val.(*serviceCacheEntry)
+	// 创建 services 切片的副本，避免直接修改共享数据
+	services := make([]*registry.Service, len(entry.services))
+	copy(services, entry.services)
 
 	for i, svc := range services {
 		var aliveNodes []*registry.Node
