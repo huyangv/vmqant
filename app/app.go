@@ -36,6 +36,7 @@ import (
 	"github.com/huyangv/vmqant/module/modules"
 	"github.com/huyangv/vmqant/registry"
 	mqrpc "github.com/huyangv/vmqant/rpc"
+	defaultrpc "github.com/huyangv/vmqant/rpc/base"
 	"github.com/huyangv/vmqant/selector"
 	"github.com/huyangv/vmqant/selector/cache"
 	"github.com/nats-io/nats.go"
@@ -205,6 +206,17 @@ func NewApp(opts ...module.Option) module.App {
 	app.opts = options
 	options.Selector.Init(selector.SetWatcher(app.Watcher))
 	app.rpcserializes = map[string]module.RPCSerialize{}
+
+	// 创建 NATS 连接池
+	// 如果用户提供了连接，将其放入连接池并读取其配置
+	poolSize := 20 // 默认连接池大小
+	pool, err := defaultrpc.NewNATSConnectionPool(poolSize, options.Nats)
+	if err != nil {
+		log.Warning("Failed to create NATS connection pool, falling back to single connection: %v", err)
+	} else {
+		app.natsPool = pool
+	}
+
 	return app
 }
 
@@ -227,6 +239,9 @@ type DefaultApp struct {
 
 	// 心跳检测器
 	heartbeatDetector *HeartbeatDetector
+
+	// NATS 连接池
+	natsPool *defaultrpc.NATSConnectionPool
 }
 
 // Run 运行应用
@@ -321,7 +336,13 @@ func (app *DefaultApp) Options() module.Options {
 }
 
 // Transport Transport
+// 优先使用连接池，如果连接池不可用则使用单个连接
 func (app *DefaultApp) Transport() *nats.Conn {
+	// 优先使用连接池
+	if app.natsPool != nil && !app.natsPool.IsClosed() {
+		return app.natsPool.Get()
+	}
+	// 降级到单连接
 	return app.opts.Nats
 }
 
@@ -364,7 +385,11 @@ func (app *DefaultApp) OnInit(settings conf.Config) error {
 
 // OnDestroy 应用退出
 func (app *DefaultApp) OnDestroy() error {
-
+	// 关闭 NATS 连接池
+	if app.natsPool != nil {
+		app.natsPool.Close()
+		app.natsPool = nil
+	}
 	return nil
 }
 
