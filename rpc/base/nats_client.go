@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
-	"time"
 
 	"github.com/huyangv/vmqant/log"
 	"github.com/huyangv/vmqant/module"
@@ -122,14 +121,13 @@ func (c *NatsClient) CallNR(callInfo *mqrpc.CallInfo) error {
 
 /*
 *
-接收应答信息
+接收应答信息 - 使用异步订阅优化性能，避免阻塞
 */
 func (c *NatsClient) on_request_handle() (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			var rn = ""
 			switch r.(type) {
-
 			case string:
 				rn = r.(string)
 			case error:
@@ -142,45 +140,24 @@ func (c *NatsClient) on_request_handle() (err error) {
 			fmt.Println(errstr)
 		}
 	}()
-	c.subs, err = c.app.Transport().SubscribeSync(c.callbackqueueName)
-	if err != nil {
-		return err
-	}
 
-	go func() {
-		<-c.done
-		c.subs.Unsubscribe()
-	}()
-
-	for !c.isClose {
-		m, err := c.subs.NextMsg(time.Minute)
-		if err != nil && err == nats.ErrTimeout {
-			//fmt.Println(err.Error())
-			//log.Warning("NatsServer error with '%v'",err)
-			if !c.subs.IsValid() {
-				//订阅已关闭，需要重新订阅
-				c.subs, err = c.app.Transport().SubscribeSync(c.callbackqueueName)
-				if err != nil {
-					log.Error("NatsClient SubscribeSync[1] error with '%v'", err)
-					continue
+	// 使用异步订阅替代 SubscribeSync，消息到达时立即处理，不阻塞接收循环
+	c.subs, err = c.app.Transport().Subscribe(c.callbackqueueName, func(m *nats.Msg) {
+		defer func() {
+			if r := recover(); r != nil {
+				var rn = ""
+				switch r.(type) {
+				case string:
+					rn = r.(string)
+				case error:
+					rn = r.(error).Error()
 				}
+				buf := make([]byte, 1024)
+				l := runtime.Stack(buf, false)
+				errstr := string(buf[:l])
+				log.Error("on_request_handle message handler panic: %s\n ----Stack----\n%s", rn, errstr)
 			}
-			continue
-		} else if err != nil {
-			//fmt.Println(fmt.Sprintf("%v rpcclient error: %v", time.Now().String(), err.Error()))
-			if err.Error() != "nats: invalid subscription" {
-				log.Error("NatsClient error with '%v'", err)
-			}
-			if !c.subs.IsValid() {
-				//订阅已关闭，需要重新订阅
-				c.subs, err = c.app.Transport().SubscribeSync(c.callbackqueueName)
-				if err != nil {
-					log.Error("NatsClient SubscribeSync[2] error with '%v'", err)
-					continue
-				}
-			}
-			continue
-		}
+		}()
 
 		resultInfo, err := c.UnmarshalResult(m.Data)
 		if err != nil {
@@ -195,8 +172,25 @@ func (c *NatsClient) on_request_handle() (err error) {
 				log.Warning("rpc callback no found : [%s]", correlation_id)
 			}
 		}
+	})
+
+	if err != nil {
+		return err
 	}
 
+	// 等待关闭信号，保持 goroutine 运行
+	go func() {
+		select {
+		case <-c.done:
+			//客户端关闭
+		}
+		if c.subs != nil {
+			c.subs.Unsubscribe()
+		}
+	}()
+
+	// 等待关闭信号
+	<-c.done
 	return nil
 }
 

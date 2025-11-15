@@ -129,40 +129,37 @@ func (s *NatsServer) on_request_handle() (err error) {
 
 	// 使用异步订阅替代 SubscribeSync，消息到达时立即处理，不阻塞接收循环
 	s.subs, err = s.app.Transport().Subscribe(s.addr, func(m *nats.Msg) {
-		// 消息到达时立即处理，在独立的 goroutine 中执行，避免阻塞 NATS 内部处理
-		go func(msg *nats.Msg) {
-			defer func() {
-				if r := recover(); r != nil {
-					var rn = ""
-					switch r.(type) {
-					case string:
-						rn = r.(string)
-					case error:
-						rn = r.(error).Error()
-					}
-					buf := make([]byte, 1024)
-					l := runtime.Stack(buf, false)
-					errstr := string(buf[:l])
-					log.Error("on_request_handle message handler panic: %s\n ----Stack----\n%s", rn, errstr)
+		defer func() {
+			if r := recover(); r != nil {
+				var rn = ""
+				switch r.(type) {
+				case string:
+					rn = r.(string)
+				case error:
+					rn = r.(error).Error()
 				}
-			}()
-
-			rpcInfo, err := s.Unmarshal(msg.Data)
-			if err == nil {
-				callInfo := &mqrpc.CallInfo{
-					RPCInfo: rpcInfo,
-				}
-				callInfo.Props = map[string]interface{}{
-					"reply_to": rpcInfo.ReplyTo,
-				}
-
-				callInfo.Agent = s //设置代理为NatsServer
-
-				s.server.Call(callInfo)
-			} else {
-				log.Error("Unmarshal error: %v", err)
+				buf := make([]byte, 1024)
+				l := runtime.Stack(buf, false)
+				errstr := string(buf[:l])
+				log.Error("on_request_handle message handler panic: %s\n ----Stack----\n%s", rn, errstr)
 			}
-		}(m)
+		}()
+
+		rpcInfo, err := s.Unmarshal(m.Data)
+		if err == nil {
+			callInfo := &mqrpc.CallInfo{
+				RPCInfo: rpcInfo,
+			}
+			callInfo.Props = map[string]interface{}{
+				"reply_to": rpcInfo.ReplyTo,
+			}
+
+			callInfo.Agent = s //设置代理为NatsServer
+
+			s.server.Call(callInfo)
+		} else {
+			log.Error("Unmarshal error: %v", err)
+		}
 	})
 
 	if err != nil {
