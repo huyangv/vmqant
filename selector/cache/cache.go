@@ -14,9 +14,9 @@ type CacheSelector struct {
 	so  selector.Options
 	ttl time.Duration
 
-	// registry cache - 使用 RWMutex 支持并发读取
-	sync.RWMutex
-	cache map[string]*cacheEntry
+	// registry cache
+	sync.Mutex
+	cache map[string][]*registry.Service
 	ttls  map[string]time.Time
 
 	watched map[string]bool
@@ -24,12 +24,6 @@ type CacheSelector struct {
 	// used to close or reload watcher
 	reload chan bool
 	exit   chan bool
-}
-
-// cacheEntry 缓存条目，包含服务列表和加载状态
-type cacheEntry struct {
-	services []*registry.Service
-	loading  bool // 标记是否正在加载，防止缓存穿透
 }
 
 var (
@@ -87,115 +81,65 @@ func (c *CacheSelector) del(service string) {
 }
 
 func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
-	// 1. 快速路径：读锁检查缓存（支持并发读取）
-	c.RLock()
-	entry, ok := c.cache[service]
-	var ttl time.Time
-	var hasTTL bool
-	if ok {
-		ttl, hasTTL = c.ttls[service]
-	}
-	// 检查是否需要启动 watcher
-	_, watched := c.watched[service]
-	c.RUnlock()
-
-	// 启动 watcher（如果需要）
-	if !watched {
-		c.Lock()
-		// double-check：可能其他 goroutine 已经启动了
-		if _, watched := c.watched[service]; !watched {
-			go c.run(service)
-			c.watched[service] = true
-		}
-		c.Unlock()
-	}
-
-	// 2. 缓存命中且未过期，直接返回（无锁读取路径）
-	if ok && entry != nil {
-		if hasTTL && time.Since(ttl) < c.ttl {
-			// 在锁外进行深拷贝，减少持锁时间
-			return c.cp(entry.services), nil
-		}
-	}
-
-	// 3. 缓存未命中或过期，需要更新
-	// 使用 double-check 模式，避免并发时重复查询
 	c.Lock()
-	// 再次检查（可能其他 goroutine 已经更新）
-	entry, ok = c.cache[service]
-	if ok {
-		ttl, hasTTL = c.ttls[service]
-		// 如果缓存已更新，直接返回
-		if hasTTL && time.Since(ttl) < c.ttl {
-			services := entry.services
-			c.Unlock()
-			return c.cp(services), nil
-		}
-		// 如果正在加载，等待一小段时间后重试
-		if entry.loading {
-			c.Unlock()
-			time.Sleep(10 * time.Millisecond)
-			return c.get(service) // 递归重试
-		}
-		// 标记为正在加载
-		entry.loading = true
-		c.cache[service] = entry
-	} else {
-		// 创建新条目并标记为加载中
-		entry = &cacheEntry{loading: true}
-		c.cache[service] = entry
-	}
-	c.Unlock()
+	defer c.Unlock()
 
-	// 4. 锁外执行慢操作（查询注册中心）
-	services, err := c.so.Registry.GetService(service)
-	if err != nil {
-		// 加载失败，清理标记
-		c.Lock()
-		if entry, ok := c.cache[service]; ok && entry.loading {
-			delete(c.cache, service)
-			delete(c.ttls, service)
-		}
-		c.Unlock()
-
-		// 如果是 NotFound 错误，直接返回
-		if err == registry.ErrNotFound {
-			return nil, selector.ErrNotFound
-		}
-
-		// 其他错误：如果有过期缓存，返回过期缓存
-		// 注意：这里需要重新获取 entry，因为之前的 entry 可能已经被删除
-		c.RLock()
-		oldEntry, oldOk := c.cache[service]
-		c.RUnlock()
-		if oldOk && oldEntry != nil && len(oldEntry.services) > 0 {
-			return c.cp(oldEntry.services), nil
-		}
-		return nil, err
+	// watch service if not watched
+	if _, ok := c.watched[service]; !ok {
+		go c.run(service)
+		c.watched[service] = true
 	}
 
-	// 5. 更新缓存（写锁）
-	copiedServices := c.cp(services) // 在锁外拷贝
-	c.Lock()
-	entry = &cacheEntry{
-		services: copiedServices,
-		loading:  false,
-	}
-	c.cache[service] = entry
-	c.ttls[service] = time.Now().Add(c.ttl)
-	c.Unlock()
+	// get does the actual request for a service
+	// it also caches it
+	get := func(service string) ([]*registry.Service, error) {
+		// ask the registry
+		services, err := c.so.Registry.GetService(service)
+		if err != nil {
+			return nil, err
+		}
 
-	return copiedServices, nil
+		// cache results
+		c.set(service, c.cp(services))
+		return services, nil
+	}
+
+	// check the cache first
+	services, ok := c.cache[service]
+
+	// cache miss or no services
+	if !ok || len(services) == 0 {
+		return get(service)
+	}
+
+	// got cache but lets check ttl
+	ttl, kk := c.ttls[service]
+
+	// within ttl so return cache
+	if kk && time.Since(ttl) < c.ttl {
+		return c.cp(services), nil
+	}
+
+	// expired entry so get service
+	services, err := get(service)
+
+	// no error then return error
+	if err == nil {
+		return services, nil
+	}
+
+	// not found error then return
+	if err == registry.ErrNotFound {
+		return nil, selector.ErrNotFound
+	}
+
+	// other error
+	// return expired cache as last resort
+	return c.cp(services), nil
 }
 
 func (c *CacheSelector) set(service string, services []*registry.Service) {
-	entry := &cacheEntry{
-		services: services,
-		loading:  false,
-	}
-	c.Lock()
-	defer c.Unlock()
-	c.cache[service] = entry
+	c.cache[service] = services
 	c.ttls[service] = time.Now().Add(c.ttl)
 }
 
@@ -207,13 +151,12 @@ func (c *CacheSelector) update(res *registry.Result) {
 	c.Lock()
 	defer c.Unlock()
 
-	entry, ok := c.cache[res.Service.Name]
+	services, ok := c.cache[res.Service.Name]
 	if !ok {
 		// we're not going to cache anything
 		// unless there was already a lookup
 		return
 	}
-	services := entry.services
 
 	if len(res.Service.Nodes) == 0 {
 		switch res.Action {
@@ -324,11 +267,10 @@ func (c *CacheSelector) MarkNodeUnhealthy(service string, nodeID string) {
 	c.Lock()
 	defer c.Unlock()
 
-	entry, ok := c.cache[service]
-	if !ok || entry == nil {
+	services, ok := c.cache[service]
+	if !ok {
 		return
 	}
-	services := entry.services
 
 	// 找到对应的服务和节点
 	for i, svc := range services {
@@ -489,7 +431,7 @@ func (c *CacheSelector) Reset(service string) {
 // Close stops the watcher and destroys the cache
 func (c *CacheSelector) Close() error {
 	c.Lock()
-	c.cache = make(map[string]*cacheEntry)
+	c.cache = make(map[string][]*registry.Service)
 	c.watched = make(map[string]bool)
 	c.Unlock()
 
@@ -531,7 +473,7 @@ func NewSelector(opts ...selector.Option) selector.Selector {
 		so:      sopts,
 		ttl:     ttl,
 		watched: make(map[string]bool),
-		cache:   make(map[string]*cacheEntry),
+		cache:   make(map[string][]*registry.Service),
 		ttls:    make(map[string]time.Time),
 		reload:  make(chan bool, 1),
 		exit:    make(chan bool),
@@ -556,11 +498,10 @@ func (c *CacheSelector) RemoveDeadNode(service string, nodeID string) {
 	c.Lock()
 	defer c.Unlock()
 
-	entry, ok := c.cache[service]
-	if !ok || entry == nil {
+	services, ok := c.cache[service]
+	if !ok {
 		return
 	}
-	services := entry.services
 
 	for i, svc := range services {
 		var aliveNodes []*registry.Node
