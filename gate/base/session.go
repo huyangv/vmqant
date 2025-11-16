@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strconv"
 	"sync"
+	"time"
 
 	"github.com/huyangv/vmqant/gate"
 	"github.com/huyangv/vmqant/log"
@@ -375,27 +376,57 @@ func (sesid *sessionagent) UnBind() (err string) {
 }
 
 func (sesid *sessionagent) Push() (err string) {
+	start := time.Now()
+	sessionId := sesid.session.SessionId
+	log.TInfo(nil, "[SESSION_PUSH] START SessionId=%s", sessionId)
+	
 	if sesid.app == nil {
 		err = fmt.Sprintf("Module.App is nil")
+		log.TInfo(nil, "[SESSION_PUSH] ERROR SessionId=%s Elapsed=%v Error=%s", sessionId, time.Since(start), err)
 		return
 	}
 	server, e := sesid.app.GetServerByID(sesid.session.ServerId)
 	if e != nil {
 		err = fmt.Sprintf("Service not found id(%s)", sesid.session.ServerId)
+		log.TInfo(nil, "[SESSION_PUSH] ERROR SessionId=%s Elapsed=%v Error=%s", sessionId, time.Since(start), err)
 		return
 	}
+	
+	t1 := time.Now()
 	sesid.lock.Lock()
 	tmp := map[string]string{}
 	for k, v := range sesid.session.Settings {
 		tmp[k] = v
 	}
 	sesid.lock.Unlock()
+	lockElapsed := time.Since(t1)
+	if lockElapsed >= 10*time.Millisecond {
+		log.TInfo(nil, "[SESSION_PUSH] LOCK_COPY SessionId=%s Elapsed=%v SettingsCount=%d", sessionId, lockElapsed, len(tmp))
+	}
+	
+	t2 := time.Now()
 	result, err := server.Call(nil, "Push", log.CreateTrace(sesid.TraceId(), sesid.SpanId()), sesid.session.SessionId, tmp)
+	rpcElapsed := time.Since(t2)
+	totalElapsed := time.Since(start)
+	
+	if rpcElapsed >= 50*time.Millisecond || totalElapsed >= 50*time.Millisecond {
+		log.TInfo(nil, "[SESSION_PUSH] RPC_CALL SessionId=%s RpcElapsed=%v TotalElapsed=%v Error=%s", sessionId, rpcElapsed, totalElapsed, err)
+	}
+	
 	if err == "" {
 		if result != nil {
 			//绑定成功,重新更新当前Session
+			t3 := time.Now()
 			sesid.update(result.(gate.Session))
+			updateElapsed := time.Since(t3)
+			if updateElapsed >= 10*time.Millisecond {
+				log.TInfo(nil, "[SESSION_PUSH] UPDATE SessionId=%s Elapsed=%v", sessionId, updateElapsed)
+			}
 		}
+	}
+	
+	if totalElapsed >= 50*time.Millisecond {
+		log.TInfo(nil, "[SESSION_PUSH] END SessionId=%s TotalElapsed=%v", sessionId, totalElapsed)
 	}
 	return
 }

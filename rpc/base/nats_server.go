@@ -98,12 +98,32 @@ func (s *NatsServer) Shutdown() (err error) {
 }
 
 func (s *NatsServer) Callback(callinfo *mqrpc.CallInfo) error {
+	start := time.Now()
+	cid := callinfo.RPCInfo.Cid
+	funcName := callinfo.RPCInfo.Fn
+
+	t1 := time.Now()
 	body, err := s.MarshalResult(callinfo.Result)
+	marshalElapsed := time.Since(t1)
 	if err != nil {
+		if marshalElapsed >= 10*time.Millisecond {
+			log.TInfo(nil, "[NATS_SERVER] CALLBACK MARSHAL_ERROR Cid=%s Func=%s Elapsed=%v Error=%s", cid, funcName, marshalElapsed, err.Error())
+		}
 		return err
 	}
 	reply_to := callinfo.Props["reply_to"].(string)
-	return s.app.Transport().Publish(reply_to, body)
+
+	t2 := time.Now()
+	publishErr := s.app.Transport().Publish(reply_to, body)
+	publishElapsed := time.Since(t2)
+	totalElapsed := time.Since(start)
+
+	if marshalElapsed >= 10*time.Millisecond || publishElapsed >= 10*time.Millisecond || totalElapsed >= 10*time.Millisecond {
+		log.TInfo(nil, "[NATS_SERVER] CALLBACK PUBLISH Cid=%s Func=%s MarshalElapsed=%v PublishElapsed=%v TotalElapsed=%v Error=%v",
+			cid, funcName, marshalElapsed, publishElapsed, totalElapsed, publishErr)
+	}
+
+	return publishErr
 }
 
 /*

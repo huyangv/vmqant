@@ -394,7 +394,9 @@ func (s *RPCServer) _runFunc(start time.Time, functionInfo *mqrpc.FunctionInfo, 
 		s._errorCallback(start, callInfo, callInfo.RPCInfo.Cid, fmt.Sprintf("%s rpc func(%s) return error %s\n", s.module.GetType(), callInfo.RPCInfo.Fn, "func(....)(result interface{}, err error)"))
 		return
 	}
+	t_serialize := time.Now()
 	argsType, args, err := argsutil.ArgsTypeAnd2Bytes(s.app, rs[0])
+	serializeElapsed := time.Since(t_serialize)
 	if err != nil {
 		s._errorCallback(start, callInfo, callInfo.RPCInfo.Cid, err.Error())
 		return
@@ -407,7 +409,16 @@ func (s *RPCServer) _runFunc(start time.Time, functionInfo *mqrpc.FunctionInfo, 
 	)
 	callInfo.Result = resultInfo
 	callInfo.ExecTime = time.Since(start).Nanoseconds()
+
+	t_callback := time.Now()
 	s.doCallback(callInfo)
+	callbackElapsed := time.Since(t_callback)
+	totalElapsed := time.Since(start)
+
+	if serializeElapsed >= 10*time.Millisecond || callbackElapsed >= 10*time.Millisecond || totalElapsed >= 50*time.Millisecond {
+		log.TInfo(nil, "[RPC_SERVER] CALLBACK Cid=%s Func=%s ModuleType=%s SerializeElapsed=%v CallbackElapsed=%v TotalElapsed=%v",
+			callInfo.RPCInfo.Cid, callInfo.RPCInfo.Fn, s.module.GetType(), serializeElapsed, callbackElapsed, totalElapsed)
+	}
 	if s.app.GetSettings().RPC.Log {
 		log.TInfo(nil, "rpc Exec ModuleType = %v Func = %v Elapsed = %v", s.module.GetType(), callInfo.RPCInfo.Fn, time.Since(start))
 	}

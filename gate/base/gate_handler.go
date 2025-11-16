@@ -18,12 +18,13 @@ package basegate
 import (
 	"fmt"
 	"runtime"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/huyangv/vmqant/gate"
 	"github.com/huyangv/vmqant/log"
 	"github.com/pkg/errors"
-	"strings"
-	"sync"
 )
 
 type handler struct {
@@ -210,23 +211,44 @@ func (h *handler) UnBind(span log.TraceSpan, Sessionid string) (result gate.Sess
  *Push the session with the the Userid.
  */
 func (h *handler) Push(span log.TraceSpan, Sessionid string, Settings map[string]string) (result gate.Session, err string) {
+	start := time.Now()
+	log.TInfo(span, "[HANDLER_PUSH] START SessionId=%s SettingsCount=%d", Sessionid, len(Settings))
+	
 	agent, ok := h.sessions.Load(Sessionid)
 	if !ok || agent == nil {
 		err = "No Sesssion found"
+		log.TInfo(span, "[HANDLER_PUSH] ERROR SessionId=%s Elapsed=%v Error=%s", Sessionid, time.Since(start), err)
 		return
 	}
+	
+	t1 := time.Now()
 	//覆盖当前map对应的key-value
 	for key, value := range Settings {
 		_ = agent.(gate.Agent).GetSession().SetLocalKV(key, value)
 	}
+	setElapsed := time.Since(t1)
+	if setElapsed >= 10*time.Millisecond {
+		log.TInfo(span, "[HANDLER_PUSH] SET_LOCALKV SessionId=%s Elapsed=%v", Sessionid, setElapsed)
+	}
+	
 	result = agent.(gate.Agent).GetSession()
+	
 	if h.gate.GetStorageHandler() != nil && agent.(gate.Agent).GetSession().GetUserID() != "" {
+		t2 := time.Now()
 		err := h.gate.GetStorageHandler().Storage(agent.(gate.Agent).GetSession())
+		storageElapsed := time.Since(t2)
 		if err != nil {
 			log.Warning("gate session storage failure : %s", err.Error())
 		}
+		if storageElapsed >= 10*time.Millisecond {
+			log.TInfo(span, "[HANDLER_PUSH] STORAGE SessionId=%s Elapsed=%v", Sessionid, storageElapsed)
+		}
 	}
 
+	totalElapsed := time.Since(start)
+	if totalElapsed >= 50*time.Millisecond {
+		log.TInfo(span, "[HANDLER_PUSH] END SessionId=%s TotalElapsed=%v", Sessionid, totalElapsed)
+	}
 	return
 }
 

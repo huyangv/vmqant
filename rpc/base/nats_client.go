@@ -88,12 +88,15 @@ func (c *NatsClient) Done() (err error) {
 消息请求
 */
 func (c *NatsClient) Call(callInfo *mqrpc.CallInfo, callback chan *rpcpb.ResultInfo) error {
+	start := time.Now()
+	correlation_id := callInfo.RPCInfo.Cid
+	funcName := callInfo.RPCInfo.Fn
+
 	//var err error
 	if c.isClose {
 		return fmt.Errorf("AMQPClient is closed")
 	}
 	callInfo.RPCInfo.ReplyTo = c.callbackqueueName
-	var correlation_id = callInfo.RPCInfo.Cid
 
 	clinetCallInfo := ClinetCallInfo{
 		correlation_id: correlation_id,
@@ -101,11 +104,28 @@ func (c *NatsClient) Call(callInfo *mqrpc.CallInfo, callback chan *rpcpb.ResultI
 		timeout:        callInfo.RPCInfo.Expired,
 	}
 	c.callinfos.Store(correlation_id, clinetCallInfo)
+
+	t1 := time.Now()
 	body, err := c.Marshal(callInfo.RPCInfo)
+	marshalElapsed := time.Since(t1)
 	if err != nil {
+		if marshalElapsed >= 10*time.Millisecond {
+			log.TInfo(nil, "[NATS_CLIENT] CALL MARSHAL_ERROR Cid=%s Func=%s Elapsed=%v Error=%s", correlation_id, funcName, marshalElapsed, err.Error())
+		}
 		return err
 	}
-	return c.app.Transport().Publish(c.session.GetNode().Address, body)
+
+	t2 := time.Now()
+	publishErr := c.app.Transport().Publish(c.session.GetNode().Address, body)
+	publishElapsed := time.Since(t2)
+	totalElapsed := time.Since(start)
+
+	if publishElapsed >= 10*time.Millisecond || totalElapsed >= 10*time.Millisecond {
+		log.TInfo(nil, "[NATS_CLIENT] CALL PUBLISH Cid=%s Func=%s MarshalElapsed=%v PublishElapsed=%v TotalElapsed=%v Error=%v",
+			correlation_id, funcName, marshalElapsed, publishElapsed, totalElapsed, publishErr)
+	}
+
+	return publishErr
 }
 
 /*
