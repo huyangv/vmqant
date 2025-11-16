@@ -70,7 +70,7 @@ func NewNatsServer(app module.App, s *RPCServer) (*NatsServer, error) {
 	server.app = app
 	server.baseAddr = nats.NewInbox()
 	server.addr = server.baseAddr // 保持兼容性，返回基础地址
-	server.numWorkers = 32        // 默认 8 个 worker，可以根据配置调整
+	server.numWorkers = 1         // 默认 8 个 worker，可以根据配置调整
 	go func() {
 		server.on_request_handle()
 		safeClose(server.stopeds)

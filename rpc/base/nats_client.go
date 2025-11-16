@@ -54,7 +54,7 @@ func NewNatsClient(app module.App, session module.ServerSession) (client *NatsCl
 	client.done = make(chan error)
 	client.stopChan = make(chan bool)
 	client.isClose = false
-	client.numWorkers = 32 // 默认 4 个 worker，可以根据配置调整
+	client.numWorkers = 1 // 默认 4 个 worker，可以根据配置调整
 	go client.on_request_handle()
 
 	// 启动队列状态监控（每 5 秒输出一次）
@@ -357,7 +357,7 @@ func (c *NatsClient) selectCallbackTopic(cid string) string {
 // selectTopic 根据基础地址和 Cid 使用哈希选择主题（多主题方案）
 // 使用 FNV-1a 哈希算法，确保相同 Cid 总是路由到同一个主题
 func (c *NatsClient) selectTopic(baseAddr string, cid string) string {
-	const numWorkers = 8 // 与服务器端保持一致
+	numWorkers := c.numWorkers
 
 	// 检查是否是格式 baseAddr_N 的地址（最后一个下划线后是纯数字）
 	// 例如：_INBOX.xxx_0, _INBOX.xxx_1 等
