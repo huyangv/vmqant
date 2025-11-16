@@ -3,12 +3,13 @@ package selector
 import (
 	"math/rand"
 	"sync"
+	"time"
 
 	"github.com/huyangv/vmqant/registry"
 )
 
 func init() {
-	// rand.Seed(time.Now().UnixNano())
+	rand.Seed(time.Now().UnixNano())
 }
 
 // Random is a random strategy algorithm for node selection
