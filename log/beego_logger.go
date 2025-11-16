@@ -27,7 +27,7 @@ func NewBeegoLogger(debug bool, ProcessID string, Logdir string, settings map[st
 	log := logs.NewLogger()
 	log.ProcessID = ProcessID
 	log.EnableFuncCallDepth(true)
-	log.Async(102400) //同步打印,可能影响性能
+	log.Async(1024000) //同步打印,可能影响性能
 	log.SetLogFuncCallDepth(4)
 	if debug {
 		//控制台
