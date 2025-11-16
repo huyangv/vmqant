@@ -213,68 +213,41 @@ func (h *handler) UnBind(span log.TraceSpan, Sessionid string) (result gate.Sess
 func (h *handler) Push(span log.TraceSpan, Sessionid string, Settings map[string]string) (result gate.Session, err string) {
 	start := time.Now()
 	log.TInfo(span, "[HANDLER_PUSH] START SessionId=%s SettingsCount=%d", Sessionid, len(Settings))
-
-	// 测量 Load 操作
-	t_load_start := time.Now()
+	
 	agent, ok := h.sessions.Load(Sessionid)
-	loadElapsed := time.Since(t_load_start)
-
-	// 总是记录 Load 时间，如果超过 1ms
-	if loadElapsed >= 1*time.Millisecond {
-		log.TInfo(span, "[HANDLER_PUSH] LOAD_SESSION SessionId=%s LoadElapsed=%v", Sessionid, loadElapsed)
-	}
-
 	if !ok || agent == nil {
 		err = "No Sesssion found"
-		log.TInfo(span, "[HANDLER_PUSH] ERROR SessionId=%s TotalElapsed=%v LoadElapsed=%v Error=%s", Sessionid, time.Since(start), loadElapsed, err)
+		log.TInfo(span, "[HANDLER_PUSH] ERROR SessionId=%s Elapsed=%v Error=%s", Sessionid, time.Since(start), err)
 		return
 	}
-
-	// 测量类型断言
-	t_assert_start := time.Now()
-	agentTyped := agent.(gate.Agent)
-	assertElapsed := time.Since(t_assert_start)
-	if assertElapsed >= 1*time.Millisecond {
-		log.TInfo(span, "[HANDLER_PUSH] TYPE_ASSERT SessionId=%s AssertElapsed=%v", Sessionid, assertElapsed)
-	}
-
-	// 测量 GetSession() 调用
-	t_get_session_start := time.Now()
-	session := agentTyped.GetSession()
-	getSessionElapsed := time.Since(t_get_session_start)
-	if getSessionElapsed >= 1*time.Millisecond {
-		log.TInfo(span, "[HANDLER_PUSH] GET_SESSION SessionId=%s GetSessionElapsed=%v", Sessionid, getSessionElapsed)
-	}
-
+	
 	t1 := time.Now()
 	//覆盖当前map对应的key-value
 	for key, value := range Settings {
-		_ = session.SetLocalKV(key, value)
+		_ = agent.(gate.Agent).GetSession().SetLocalKV(key, value)
 	}
 	setElapsed := time.Since(t1)
-	if setElapsed >= 1*time.Millisecond {
-		log.TInfo(span, "[HANDLER_PUSH] SET_LOCALKV SessionId=%s Elapsed=%v Count=%d", Sessionid, setElapsed, len(Settings))
+	if setElapsed >= 10*time.Millisecond {
+		log.TInfo(span, "[HANDLER_PUSH] SET_LOCALKV SessionId=%s Elapsed=%v", Sessionid, setElapsed)
 	}
-
-	result = session
-
-	if h.gate.GetStorageHandler() != nil && session.GetUserID() != "" {
+	
+	result = agent.(gate.Agent).GetSession()
+	
+	if h.gate.GetStorageHandler() != nil && agent.(gate.Agent).GetSession().GetUserID() != "" {
 		t2 := time.Now()
-		err := h.gate.GetStorageHandler().Storage(session)
+		err := h.gate.GetStorageHandler().Storage(agent.(gate.Agent).GetSession())
 		storageElapsed := time.Since(t2)
 		if err != nil {
 			log.Warning("gate session storage failure : %s", err.Error())
 		}
-		if storageElapsed >= 1*time.Millisecond {
+		if storageElapsed >= 10*time.Millisecond {
 			log.TInfo(span, "[HANDLER_PUSH] STORAGE SessionId=%s Elapsed=%v", Sessionid, storageElapsed)
 		}
 	}
 
 	totalElapsed := time.Since(start)
-	// 总是打印 END 日志，包含详细的时间分解（如果超过 10ms）
-	if totalElapsed >= 10*time.Millisecond {
-		log.TInfo(span, "[HANDLER_PUSH] END SessionId=%s TotalElapsed=%v LoadElapsed=%v AssertElapsed=%v GetSessionElapsed=%v SetElapsed=%v",
-			Sessionid, totalElapsed, loadElapsed, assertElapsed, getSessionElapsed, setElapsed)
+	if totalElapsed >= 50*time.Millisecond {
+		log.TInfo(span, "[HANDLER_PUSH] END SessionId=%s TotalElapsed=%v", Sessionid, totalElapsed)
 	}
 	return
 }
