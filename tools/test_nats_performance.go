@@ -13,14 +13,14 @@ import (
 )
 
 type Stats struct {
-	Published     int64
-	Received      int64
-	Errors        int64
-	TotalLatency  int64 // 总延迟（纳秒）
-	MinLatency    int64
-	MaxLatency    int64
-	StartTime     time.Time
-	EndTime       time.Time
+	Published    int64
+	Received     int64
+	Errors       int64
+	TotalLatency int64 // 总延迟（纳秒）
+	MinLatency   int64
+	MaxLatency   int64
+	StartTime    time.Time
+	EndTime      time.Time
 }
 
 type Message struct {
@@ -36,14 +36,14 @@ var (
 
 func main() {
 	var (
-		serverURL    = flag.String("url", "nats://127.0.0.1:4222", "NATS server URL")
-		testType     = flag.String("test", "pubsub", "Test type: pubsub, request, multi-topic")
-		numMessages  = flag.Int("messages", 10000, "Number of messages to send")
-		numWorkers   = flag.Int("workers", 8, "Number of workers (for multi-topic test)")
-		messageSize  = flag.Int("size", 100, "Message size in bytes")
-		concurrent   = flag.Int("concurrent", 10, "Number of concurrent publishers")
-		subject      = flag.String("subject", "test.perf", "Subject name")
-		duration     = flag.Duration("duration", 0, "Test duration (0 = run until all messages sent)")
+		serverURL   = flag.String("url", "nats://127.0.0.1:4222", "NATS server URL")
+		testType    = flag.String("test", "pubsub", "Test type: pubsub, request, multi-topic")
+		numMessages = flag.Int("messages", 10000, "Number of messages to send")
+		numWorkers  = flag.Int("workers", 8, "Number of workers (for multi-topic test)")
+		messageSize = flag.Int("size", 100, "Message size in bytes")
+		concurrent  = flag.Int("concurrent", 10, "Number of concurrent publishers")
+		subject     = flag.String("subject", "test.perf", "Subject name")
+		duration    = flag.Duration("duration", 0, "Test duration (0 = run until all messages sent)")
 	)
 	flag.Parse()
 
@@ -189,11 +189,17 @@ func runPubSubTest(nc *nats.Conn, subject string, numMessages, concurrent, messa
 	for {
 		select {
 		case <-timeout:
-			fmt.Printf("Timeout waiting for all messages to be received\n")
+			received := atomic.LoadInt64(&stats.Received)
+			published := atomic.LoadInt64(&stats.Published)
+			fmt.Printf("Timeout waiting for all messages to be received (Published: %d, Received: %d)\n", published, received)
 			return
 		case <-ticker.C:
 			received := atomic.LoadInt64(&stats.Received)
 			published := atomic.LoadInt64(&stats.Published)
+			if published == 0 {
+				// 如果没有发布任何消息，直接返回
+				return
+			}
 			if received >= published {
 				return
 			}
@@ -409,11 +415,17 @@ func runMultiTopicTest(nc *nats.Conn, baseSubject string, numMessages, numWorker
 	for {
 		select {
 		case <-timeout:
-			fmt.Printf("Timeout waiting for all messages to be received\n")
+			received := atomic.LoadInt64(&stats.Received)
+			published := atomic.LoadInt64(&stats.Published)
+			fmt.Printf("Timeout waiting for all messages to be received (Published: %d, Received: %d)\n", published, received)
 			return
 		case <-ticker.C:
 			received := atomic.LoadInt64(&stats.Received)
 			published := atomic.LoadInt64(&stats.Published)
+			if published == 0 {
+				// 如果没有发布任何消息，直接返回
+				return
+			}
 			if received >= published {
 				return
 			}
@@ -455,4 +467,3 @@ func printStats() {
 		}
 	}
 }
-
