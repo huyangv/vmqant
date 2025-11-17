@@ -214,7 +214,6 @@ type DefaultApp struct {
 	version       string
 	settings      conf.Config
 	serverList    sync.Map
-	cleanupClaims sync.Map // 新增：用于声明清理权，避免重复清理
 	opts          module.Options
 	defaultRoutes func(app module.App, Type string, hash string) module.ServerSession
 	//将一个RPC调用路由到新的路由上
@@ -338,16 +337,11 @@ func (app *DefaultApp) GetRPCSerialize() map[string]module.RPCSerialize {
 // Watcher Watcher
 func (app *DefaultApp) Watcher(node *registry.Node) {
 	//把注销的服务ServerSession删除掉
-	if _, loaded := app.cleanupClaims.LoadOrStore(node.Id, struct{}{}); loaded {
-		return // 已有协程在清理或已清理过，避免重复 go版本升级后 可用LoadAndDelete替代该方案
-	}
 	log.Warning("Watcher node id %v, node addr %v", node.Id, node.Address)
-	session, ok := app.serverList.Load(node.Id)
+	session, ok := app.serverList.LoadAndDelete(node.Id)
 	if ok && session != nil {
 		session.(module.ServerSession).GetRpc().Done()
-		app.serverList.Delete(node.Id)
 	}
-	app.cleanupClaims.Delete(node.Id)
 }
 
 // Configure 重设应用配置
@@ -622,17 +616,12 @@ func (app *DefaultApp) InvokeWithCleanup(module module.RPCModule, moduleType str
 
 // 清理指定节点ID的服务器缓存，并联动清理selector缓存
 func (app *DefaultApp) cleanupServerCache(nodeID string) {
-	if _, loaded := app.cleanupClaims.LoadOrStore(nodeID, struct{}{}); loaded {
-		return // 已有协程在清理或已清理过，避免重复 go版本升级后 可用LoadAndDelete替代该方案
-	}
-	if session, ok := app.serverList.Load(nodeID); ok {
-		app.serverList.Delete(nodeID)
+	if session, ok := app.serverList.LoadAndDelete(nodeID); ok {
 		if s, ok := session.(module.ServerSession); ok {
 			s.GetRpc().Done()
 		}
 		log.Warning("Cleaned up dead server cache: %s", nodeID)
 	}
-	app.cleanupClaims.Delete(nodeID)
 }
 
 // 启动心跳检测
