@@ -1,16 +1,17 @@
 package server
 
 import (
+	"strconv"
+	"strings"
+	"sync"
+
 	"github.com/huyangv/vmqant/conf"
 	"github.com/huyangv/vmqant/log"
 	"github.com/huyangv/vmqant/module"
 	"github.com/huyangv/vmqant/registry"
-	"github.com/huyangv/vmqant/rpc"
-	"github.com/huyangv/vmqant/rpc/base"
+	mqrpc "github.com/huyangv/vmqant/rpc"
+	defaultrpc "github.com/huyangv/vmqant/rpc/base"
 	"github.com/huyangv/vmqant/utils/lib/addr"
-	"strconv"
-	"strings"
-	"sync"
 )
 
 type rpcServer struct {
@@ -129,12 +130,8 @@ func (s *rpcServer) ServiceRegister() error {
 	node.Metadata["server"] = s.String()
 	node.Metadata["registry"] = config.Registry.String()
 
-	s.RLock()
 	// Maps are ordered randomly, sort the keys for consistency
-
 	var endpoints []*registry.Endpoint
-
-	s.RUnlock()
 
 	service := &registry.Service{
 		Name:      config.Name,
@@ -143,9 +140,9 @@ func (s *rpcServer) ServiceRegister() error {
 		Endpoints: endpoints,
 	}
 
-	s.Lock()
+	s.RLock()
 	registered := s.registered
-	s.Unlock()
+	s.RUnlock()
 
 	if !registered {
 		log.Info("Registering node: %s", node.Id)
