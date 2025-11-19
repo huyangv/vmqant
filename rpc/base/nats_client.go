@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
-	"time"
 
 	"github.com/huyangv/vmqant/log"
 	"github.com/huyangv/vmqant/module"
@@ -115,104 +114,73 @@ func (c *NatsClient) CallNR(callInfo *mqrpc.CallInfo) error {
 	return c.app.Transport().Publish(c.session.GetNode().Address, body)
 }
 
+// handlePanic 统一的 panic 恢复处理
+func handlePanic() {
+	if r := recover(); r != nil {
+		var rn string
+		switch v := r.(type) {
+		case string:
+			rn = v
+		case error:
+			rn = v.Error()
+		default:
+			rn = fmt.Sprintf("%v", v)
+		}
+		buf := make([]byte, 1024)
+		l := runtime.Stack(buf, false)
+		errstr := string(buf[:l])
+		log.Error("%s\n ----Stack----\n%s", rn, errstr)
+		fmt.Println(errstr)
+	}
+}
+
 /*
 *
 接收应答信息
 */
-func (c *NatsClient) on_request_handle() (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			var rn = ""
-			switch r.(type) {
+func (c *NatsClient) on_request_handle() error {
+	defer handlePanic()
 
-			case string:
-				rn = r.(string)
-			case error:
-				rn = r.(error).Error()
-			}
-			buf := make([]byte, 1024)
-			l := runtime.Stack(buf, false)
-			errstr := string(buf[:l])
-			log.Error("%s\n ----Stack----\n%s", rn, errstr)
-			fmt.Println(errstr)
+	// 订阅回调队列，NATS 客户端会在重连时自动恢复订阅
+	var err error
+	c.subs, err = c.app.Transport().Subscribe(c.callbackqueueName, func(msg *nats.Msg) {
+		defer handlePanic()
+
+		if c.isClose {
+			return
 		}
-	}()
-	c.subs, err = c.app.Transport().SubscribeSync(c.callbackqueueName)
+
+		resultInfo, err := c.UnmarshalResult(msg.Data)
+		if err != nil {
+			log.Error("Unmarshal faild", err)
+			return
+		}
+
+		correlation_id := resultInfo.Cid
+		clinetCallInfo, ok := c.callinfos.LoadAndDelete(correlation_id)
+		if !ok || clinetCallInfo == nil {
+			//可能客户端已超时了，但服务端处理完还给回调了
+			log.Warning("rpc callback no found : [%s]", correlation_id)
+			return
+		}
+
+		c.PushResultToChan(clinetCallInfo.(ClinetCallInfo), resultInfo)
+	})
 	if err != nil {
+		log.Error("NatsClient Subscribe error with '%v'", err)
 		return err
 	}
 
-	go func() {
-		<-c.done
+	// 等待关闭信号
+	<-c.done
+	if c.subs != nil {
 		c.subs.Unsubscribe()
-	}()
-
-	for !c.isClose {
-		m, err := c.subs.NextMsg(time.Minute)
-		if err != nil && err == nats.ErrTimeout {
-			//fmt.Println(err.Error())
-			//log.Warning("NatsServer error with '%v'",err)
-			if !c.subs.IsValid() {
-				//订阅已关闭，需要重新订阅
-				c.subs, err = c.app.Transport().SubscribeSync(c.callbackqueueName)
-				if err != nil {
-					log.Error("NatsClient SubscribeSync[1] error with '%v'", err)
-					continue
-				}
-			}
-			continue
-		} else if err != nil {
-			//fmt.Println(fmt.Sprintf("%v rpcclient error: %v", time.Now().String(), err.Error()))
-			if err.Error() != "nats: invalid subscription" {
-				log.Error("NatsClient error with '%v'", err)
-			}
-			if !c.subs.IsValid() {
-				//订阅已关闭，需要重新订阅
-				c.subs, err = c.app.Transport().SubscribeSync(c.callbackqueueName)
-				if err != nil {
-					log.Error("NatsClient SubscribeSync[2] error with '%v'", err)
-					continue
-				}
-			}
-			continue
-		}
-
-		resultInfo, err := c.UnmarshalResult(m.Data)
-		if err != nil {
-			log.Error("Unmarshal faild", err)
-		} else {
-			correlation_id := resultInfo.Cid
-			clinetCallInfo, ok := c.callinfos.LoadAndDelete(correlation_id)
-			if ok && clinetCallInfo != nil {
-				c.PushResultToChan(clinetCallInfo.(ClinetCallInfo), resultInfo)
-			} else {
-				//可能客户端已超时了，但服务端处理完还给回调了
-				log.Warning("rpc callback no found : [%s]", correlation_id)
-			}
-		}
 	}
-
 	return nil
 }
 
 func (c *NatsClient) PushResultToChan(callInfo ClinetCallInfo, resultInfo *rpcpb.ResultInfo) {
-	defer func() {
-		if r := recover(); r != nil {
-			var rn = ""
-			switch r.(type) {
-
-			case string:
-				rn = r.(string)
-			case error:
-				rn = r.(error).Error()
-			}
-			buf := make([]byte, 1024)
-			l := runtime.Stack(buf, false)
-			errstr := string(buf[:l])
-			log.Error("%s\n ----Stack----\n%s", rn, errstr)
-			fmt.Println(errstr)
-		}
-	}()
+	defer handlePanic()
 	if callInfo.call != nil {
 		callInfo.call <- resultInfo
 		c.CloseFch(callInfo.call)

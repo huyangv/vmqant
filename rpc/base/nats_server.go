@@ -14,16 +14,14 @@
 package defaultrpc
 
 import (
-	"fmt"
+	"strings"
+
 	"github.com/huyangv/vmqant/log"
 	"github.com/huyangv/vmqant/module"
-	"github.com/huyangv/vmqant/rpc"
-	"github.com/huyangv/vmqant/rpc/pb"
+	mqrpc "github.com/huyangv/vmqant/rpc"
+	rpcpb "github.com/huyangv/vmqant/rpc/pb"
 	"github.com/nats-io/nats.go"
 	"google.golang.org/protobuf/proto"
-	"runtime"
-	"strings"
-	"time"
 )
 
 type NatsServer struct {
@@ -109,79 +107,43 @@ func (s *NatsServer) Callback(callinfo *mqrpc.CallInfo) error {
 *
 接收请求信息
 */
-func (s *NatsServer) on_request_handle() (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			var rn = ""
-			switch r.(type) {
+func (s *NatsServer) on_request_handle() error {
+	defer handlePanic()
 
-			case string:
-				rn = r.(string)
-			case error:
-				rn = r.(error).Error()
-			}
-			buf := make([]byte, 1024)
-			l := runtime.Stack(buf, false)
-			errstr := string(buf[:l])
-			log.Error("%s\n ----Stack----\n%s", rn, errstr)
-			fmt.Println(errstr)
+	// 订阅请求队列，NATS 客户端会在重连时自动恢复订阅
+	var err error
+	s.subs, err = s.app.Transport().Subscribe(s.addr, func(msg *nats.Msg) {
+		defer handlePanic()
+
+		if s.isClose {
+			return
 		}
-	}()
-	s.subs, err = s.app.Transport().SubscribeSync(s.addr)
+
+		rpcInfo, err := s.Unmarshal(msg.Data)
+		if err != nil {
+			log.Error("NatsServer Unmarshal failed: %v", err)
+			return
+		}
+
+		callInfo := &mqrpc.CallInfo{
+			RPCInfo: rpcInfo,
+		}
+		callInfo.Props = map[string]interface{}{
+			"reply_to": rpcInfo.ReplyTo,
+		}
+		callInfo.Agent = s //设置代理为NatsServer
+
+		s.server.Call(callInfo)
+	})
 	if err != nil {
+		log.Error("NatsServer Subscribe error with '%v'", err)
 		return err
 	}
 
-	go func() {
-		select {
-		case <-s.done:
-			//服务关闭
-		}
+	// 等待关闭信号
+	<-s.done
+	if s.subs != nil {
 		s.subs.Unsubscribe()
-	}()
-
-	for !s.isClose {
-		m, err := s.subs.NextMsg(time.Minute)
-		if err != nil && err == nats.ErrTimeout {
-			//fmt.Println(err.Error())
-			//log.Warning("NatsServer error with '%v'",err)
-			if !s.subs.IsValid() {
-				//订阅已关闭，需要重新订阅
-				s.subs, err = s.app.Transport().SubscribeSync(s.addr)
-				if err != nil {
-					log.Error("NatsServer SubscribeSync[1] error with '%v'", err)
-					continue
-				}
-			}
-			continue
-		} else if err != nil {
-			log.Warning("NatsServer error with '%v'", err)
-			if !s.subs.IsValid() {
-				//订阅已关闭，需要重新订阅
-				s.subs, err = s.app.Transport().SubscribeSync(s.addr)
-				if err != nil {
-					log.Error("NatsServer SubscribeSync[2] error with '%v'", err)
-					continue
-				}
-			}
-			continue
-		}
-
-		rpcInfo, err := s.Unmarshal(m.Data)
-		if err == nil {
-			callInfo := &mqrpc.CallInfo{
-				RPCInfo: rpcInfo,
-			}
-			callInfo.Props = map[string]interface{}{
-				"reply_to": rpcInfo.ReplyTo,
-			}
-
-			callInfo.Agent = s //设置代理为NatsServer
-
-			s.server.Call(callInfo)
-		} else {
-			fmt.Println("error ", err)
-		}
 	}
 	return nil
 }
