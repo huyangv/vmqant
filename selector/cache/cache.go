@@ -194,7 +194,7 @@ func (c *CacheSelector) update(res *registry.Result) {
 		for _, cur := range service.Nodes {
 			var seen bool
 			for _, node := range res.Service.Nodes {
-				if cur.Id == node.Id {
+				if cur.Id == node.Id && cur.Address == node.Address {
 					seen = true
 					break
 				}
