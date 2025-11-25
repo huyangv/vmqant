@@ -160,8 +160,6 @@ func (c *RPCClient) CallArgs(ctx context.Context, _func string, ArgsType []strin
 		// 如果类型断言失败，继续执行后面的远程调用逻辑
 	}
 
-	log.Debug("nats_client.Call", c.nats_client.session.GetID())
-
 	// 远程调用：使用NATS
 	err = c.nats_client.Call(callInfo, callback)
 	if err != nil {
