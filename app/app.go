@@ -214,6 +214,7 @@ type DefaultApp struct {
 	version       string
 	settings      conf.Config
 	serverList    sync.Map
+	localModules  sync.Map // 本地模块映射表 ServerID -> module.RPCModule
 	opts          module.Options
 	defaultRoutes func(app module.App, Type string, hash string) module.ServerSession
 	//将一个RPC调用路由到新的路由上
@@ -389,6 +390,19 @@ func (app *DefaultApp) GetServerByID(serverID string) (module.ServerSession, err
 // Deprecated: 因为命名规范问题函数将废弃,请用GetServerById代替
 func (app *DefaultApp) GetServerById(serverID string) (module.ServerSession, error) {
 	return app.GetServerByID(serverID)
+}
+
+// RegisterLocalModule 注册本地模块
+func (app *DefaultApp) RegisterLocalModule(serverID string, module module.RPCModule) {
+	app.localModules.Store(serverID, module)
+}
+
+// GetLocalModuleByID 根据ServerID获取本地模块
+func (app *DefaultApp) GetLocalModuleByID(serverID string) module.RPCModule {
+	if mod, ok := app.localModules.Load(serverID); ok {
+		return mod.(module.RPCModule)
+	}
+	return nil
 }
 
 // GetServerBySelector 获取服务实例,可设置选择器

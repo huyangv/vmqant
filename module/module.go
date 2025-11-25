@@ -104,6 +104,10 @@ type App interface {
 	NewProtocolMarshal(data []byte) ProtocolMarshal
 	GetProcessID() string
 	WorkDir() string
+
+	// 本地模块管理
+	RegisterLocalModule(serverID string, module RPCModule)
+	GetLocalModuleByID(serverID string) RPCModule
 }
 
 // Module 基本模块定义

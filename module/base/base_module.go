@@ -157,6 +157,12 @@ func (m *BaseModule) OnInit(subclass module.RPCModule, app module.App, settings 
 		close(m.serviceStopeds)
 	}()
 	m.GetServer().SetListener(m)
+
+	// 注册本地模块到App，用于本地RPC调用
+	serverID := m.GetServerID()
+	if serverID != "" {
+		app.RegisterLocalModule(serverID, subclass)
+	}
 }
 
 // OnDestroy 当模块注销时调用

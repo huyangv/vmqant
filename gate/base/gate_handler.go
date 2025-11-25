@@ -19,11 +19,12 @@ import (
 	"fmt"
 	"runtime"
 
+	"strings"
+	"sync"
+
 	"github.com/huyangv/vmqant/gate"
 	"github.com/huyangv/vmqant/log"
 	"github.com/pkg/errors"
-	"strings"
-	"sync"
 )
 
 type handler struct {

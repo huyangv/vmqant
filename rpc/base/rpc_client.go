@@ -17,6 +17,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/huyangv/vmqant/log"
@@ -29,20 +30,58 @@ import (
 )
 
 type RPCClient struct {
-	app         module.App
-	nats_client *NatsClient
+	app            module.App
+	nats_client    *NatsClient
+	local_server   mqrpc.RPCServer // 本地RPCServer引用
+	targetServerID string          // 目标服务器ID
 }
 
 func NewRPCClient(app module.App, session module.ServerSession) (mqrpc.RPCClient, error) {
 	rpc_client := new(RPCClient)
 	rpc_client.app = app
+	rpc_client.targetServerID = session.GetID()
+
 	nats_client, err := NewNatsClient(app, session)
 	if err != nil {
 		log.Error("Dial: %s", err)
 		return nil, err
 	}
 	rpc_client.nats_client = nats_client
+
+	// 尝试获取本地RPCServer
+	if localModule := rpc_client.getLocalModule(); localModule != nil {
+		// 使用反射访问GetServer方法
+		moduleValue := reflect.ValueOf(localModule)
+		getServerMethod := moduleValue.MethodByName("GetServer")
+		if getServerMethod.IsValid() {
+			results := getServerMethod.Call(nil)
+			if len(results) > 0 && !results[0].IsNil() {
+				server := results[0].Interface()
+				// 使用反射访问GetRpcServer方法
+				serverValue := reflect.ValueOf(server)
+				getRpcServerMethod := serverValue.MethodByName("GetRpcServer")
+				if getRpcServerMethod.IsValid() {
+					rpcServerResults := getRpcServerMethod.Call(nil)
+					if len(rpcServerResults) > 0 && !rpcServerResults[0].IsNil() {
+						if rpcServer, ok := rpcServerResults[0].Interface().(mqrpc.RPCServer); ok {
+							rpc_client.local_server = rpcServer
+							log.Debug("Local RPC server found for %s", rpc_client.targetServerID)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return rpc_client, nil
+}
+
+// getLocalModule 获取本地模块
+func (c *RPCClient) getLocalModule() module.RPCModule {
+	if appWithLocalModule, ok := c.app.(interface{ GetLocalModuleByID(string) module.RPCModule }); ok {
+		return appWithLocalModule.GetLocalModuleByID(c.targetServerID)
+	}
+	return nil
 }
 
 func (c *RPCClient) Done() (err error) {
@@ -84,16 +123,54 @@ func (c *RPCClient) CallArgs(ctx context.Context, _func string, ArgsType []strin
 	}
 	callback := make(chan *rpcpb.ResultInfo, 1)
 	var err error
+
 	//优先使用本地rpc
-	//if c.local_client != nil {
-	//	err = c.local_client.Call(*callInfo, callback)
-	//} else
+	if c.local_server != nil {
+		// 使用类型断言调用RPCServer的Call方法
+		if localRPCServer, ok := c.local_server.(*RPCServer); ok {
+			// 本地调用：直接调用本地RPCServer
+			resultChan := make(chan *rpcpb.ResultInfo, 1)
+			localAgent := &localRPCAgent{resultChan: resultChan}
+			callInfo.Agent = localAgent
+
+			defer close(resultChan)
+
+			// 在goroutine中调用，避免阻塞
+			go func() {
+				localRPCServer.Call(callInfo)
+			}()
+
+			if ctx == nil {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(context.TODO(), c.app.Options().RPCExpired)
+				defer cancel()
+			}
+			select {
+			case resultInfo, ok := <-resultChan:
+				if !ok {
+					return nil, "client closed"
+				}
+				result, err := argsutil.Bytes2Args(c.app, resultInfo.ResultType, resultInfo.Result)
+				if err != nil {
+					return nil, err.Error()
+				}
+				return result, resultInfo.Error
+			case <-ctx.Done():
+				return nil, "deadline exceeded"
+			}
+		}
+		// 如果类型断言失败，继续执行后面的远程调用逻辑
+	}
+
+	// 远程调用：使用NATS
 	err = c.nats_client.Call(callInfo, callback)
 	if err != nil {
 		return nil, err.Error()
 	}
 	if ctx == nil {
-		ctx, _ = context.WithTimeout(context.TODO(), c.app.Options().RPCExpired)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.TODO(), c.app.Options().RPCExpired)
+		defer cancel()
 	}
 	select {
 	case resultInfo, ok := <-callback:
@@ -141,10 +218,18 @@ func (c *RPCClient) CallNRArgs(_func string, ArgsType []string, args [][]byte) (
 	callInfo := &mqrpc.CallInfo{
 		RPCInfo: rpcInfo,
 	}
+
 	//优先使用本地rpc
-	//if c.local_client != nil {
-	//	err = c.local_client.CallNR(*callInfo)
-	//} else
+	if c.local_server != nil {
+		// 本地调用：直接调用本地RPCServer
+		localAgent := &localRPCAgent{resultChan: nil}
+		callInfo.Agent = localAgent
+		if localRPCServer, ok := c.local_server.(*RPCServer); ok {
+			return localRPCServer.Call(callInfo)
+		}
+		// 如果类型断言失败，回退到远程调用
+	}
+
 	return c.nats_client.CallNR(callInfo)
 }
 
@@ -201,4 +286,20 @@ func (c *RPCClient) CallNR(_func string, params ...interface{}) (err error) {
 		log.TInfo(span, "rpc CallNR ServerId = %v Func = %v Elapsed = %v ERROR = %v", c.nats_client.session.GetID(), _func, time.Since(start), err)
 	}
 	return err
+}
+
+// localRPCAgent 本地RPC调用的Agent实现
+type localRPCAgent struct {
+	resultChan chan *rpcpb.ResultInfo
+}
+
+func (a *localRPCAgent) Callback(callInfo *mqrpc.CallInfo) error {
+	if a.resultChan != nil && callInfo.Result != nil {
+		select {
+		case a.resultChan <- callInfo.Result:
+		default:
+			// channel已满或已关闭，忽略
+		}
+	}
+	return nil
 }
