@@ -30,16 +30,14 @@ import (
 )
 
 type RPCClient struct {
-	app            module.App
-	nats_client    *NatsClient
-	local_server   mqrpc.RPCServer // 本地RPCServer引用
-	targetServerID string          // 目标服务器ID
+	app          module.App
+	nats_client  *NatsClient
+	local_server mqrpc.RPCServer // 本地RPCServer引用
 }
 
 func NewRPCClient(app module.App, session module.ServerSession) (mqrpc.RPCClient, error) {
 	rpc_client := new(RPCClient)
 	rpc_client.app = app
-	rpc_client.targetServerID = session.GetID()
 
 	nats_client, err := NewNatsClient(app, session)
 	if err != nil {
@@ -65,7 +63,7 @@ func NewRPCClient(app module.App, session module.ServerSession) (mqrpc.RPCClient
 					if len(rpcServerResults) > 0 && !rpcServerResults[0].IsNil() {
 						if rpcServer, ok := rpcServerResults[0].Interface().(mqrpc.RPCServer); ok {
 							rpc_client.local_server = rpcServer
-							log.Debug("Local RPC server found for %s", rpc_client.targetServerID)
+							log.Debug("Local RPC server found for %s", rpc_client.nats_client.session.GetID())
 						}
 					}
 				}
@@ -79,7 +77,7 @@ func NewRPCClient(app module.App, session module.ServerSession) (mqrpc.RPCClient
 // getLocalModule 获取本地模块
 func (c *RPCClient) getLocalModule() module.RPCModule {
 	if appWithLocalModule, ok := c.app.(interface{ GetLocalModuleByID(string) module.RPCModule }); ok {
-		return appWithLocalModule.GetLocalModuleByID(c.targetServerID)
+		return appWithLocalModule.GetLocalModuleByID(c.nats_client.session.GetID())
 	}
 	return nil
 }
@@ -161,6 +159,8 @@ func (c *RPCClient) CallArgs(ctx context.Context, _func string, ArgsType []strin
 		}
 		// 如果类型断言失败，继续执行后面的远程调用逻辑
 	}
+
+	log.Debug("nats_client.Call", c.nats_client.session.GetID())
 
 	// 远程调用：使用NATS
 	err = c.nats_client.Call(callInfo, callback)
