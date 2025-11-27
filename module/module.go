@@ -67,6 +67,8 @@ type App interface {
 	Type	   	想要调用的服务类型
 	*/
 	GetRouteServer(filter string, opts ...selector.SelectOption) (ServerSession, error) //获取经过筛选过的服务
+	// 根据指定kv 获取ServerSession
+	GetServerByMetadata(moduleType string, k, v string) (s ServerSession, err error)
 	GetServersByType(Type string) []ServerSession
 	GetSettings() conf.Config //获取配置信息
 
@@ -81,6 +83,8 @@ type App interface {
 	InvokeNR(module RPCModule, moduleType string, _func string, params ...interface{}) error
 	Call(ctx context.Context, moduleType, _func string, param mqrpc.ParamOption, opts ...selector.SelectOption) (interface{}, string)
 	InvokeWithCleanup(module RPCModule, moduleType string, _func string, params ...interface{}) (interface{}, string)
+	InvokeByMetadata(moduleType, k, v string, _func string, params ...interface{}) (interface{}, string)
+	InvokeNRByMetadata(moduleType, k, v string, _func string, params ...interface{}) error
 
 	/**
 	添加一个 自定义参数序列化接口

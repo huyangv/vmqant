@@ -186,6 +186,11 @@ func (m *BaseModule) GetRouteServer(moduleType string, opts ...selector.SelectOp
 	return m.App.GetRouteServer(moduleType, opts...)
 }
 
+// 根据指定kv 获取ServerSession
+func (m *BaseModule) GetServerByMetadata(moduleType string, k, v string) (s module.ServerSession, err error) {
+	return m.App.GetServerByMetadata(moduleType, k, v)
+}
+
 // Invoke  Invoke
 func (m *BaseModule) Invoke(moduleType string, _func string, params ...interface{}) (result interface{}, err string) {
 	return m.App.Invoke(m.GetSubclass(), moduleType, _func, params...)
@@ -206,6 +211,16 @@ func (m *BaseModule) InvokeNR(moduleType string, _func string, params ...interfa
 // Deprecated: 因为命名规范问题函数将废弃,请用InvokeNR代替
 func (m *BaseModule) RpcInvokeNR(moduleType string, _func string, params ...interface{}) (err error) {
 	return m.App.InvokeNR(m.GetSubclass(), moduleType, _func, params...)
+}
+
+// InvokeWithCleanup  InvokeWithCleanup
+func (m *BaseModule) InvokeByMetadata(moduleType, k, v string, _func string, params ...interface{}) (result interface{}, err string) {
+	return m.App.InvokeByMetadata(moduleType, k, v, _func, params...)
+}
+
+// InvokeNRByMetadata InvokeNRByMetadata
+func (m *BaseModule) InvokeNRByMetadata(moduleType, k, v string, _func string, params ...interface{}) (err error) {
+	return m.App.InvokeNRByMetadata(moduleType, k, v, _func, params...)
 }
 
 // InvokeArgs  InvokeArgs

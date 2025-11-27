@@ -227,6 +227,8 @@ type DefaultApp struct {
 	settings      conf.Config
 	serverList    sync.Map
 	cleanupClaims sync.Map // 新增：用于声明清理权，避免重复清理
+	// Metadata索引缓存: map[moduleType][metadataKey][metadataValue]nodeId
+	metadataIndex sync.Map // map[string]map[string]map[string]string
 	opts          module.Options
 	defaultRoutes func(app module.App, Type string, hash string) module.ServerSession
 	//将一个RPC调用路由到新的路由上
@@ -492,6 +494,35 @@ func (app *DefaultApp) GetRouteServer(filter string, opts ...selector.SelectOpti
 	return app.GetServerBySelector(moduleType, opts...)
 }
 
+// 根据指定kv 获取ServerSession
+func (app *DefaultApp) GetServerByMetadata(moduleType string, k, v string) (s module.ServerSession, err error) {
+	// 先尝试从缓存中查找
+	if nodeID := app.getNodeIDFromMetadataCache(moduleType, k, v); nodeID != "" {
+		if session, err := app.GetServerByID(nodeID); err == nil {
+			return session, nil
+		}
+		// 缓存失效，清除并继续查找
+		app.removeFromMetadataCache(moduleType, k, v)
+	}
+	
+	// 从注册中心查找并更新缓存
+	return app.GetRouteServer(moduleType,
+		selector.WithStrategy(func(services []*registry.Service) selector.Next {
+			return func() (*registry.Node, error) {
+				for _, service := range services {
+					for _, node := range service.Nodes {
+						if node.Metadata[k] == v {
+							// 更新缓存
+							app.addToMetadataCache(moduleType, k, v, node.Id)
+							return node, nil
+						}
+					}
+				}
+				return nil, fmt.Errorf("no node")
+			}
+		}))
+}
+
 // GetSettings 获取配置
 func (app *DefaultApp) GetSettings() conf.Config {
 	return app.settings
@@ -531,6 +562,25 @@ func (app *DefaultApp) RpcInvoke(module module.RPCModule, moduleType string, _fu
 // InvokeNR InvokeNR
 func (app *DefaultApp) InvokeNR(module module.RPCModule, moduleType string, _func string, params ...interface{}) (err error) {
 	server, err := app.GetRouteServer(moduleType)
+	if err != nil {
+		return
+	}
+	return server.CallNR(_func, params...)
+}
+
+// InvokeByMetadata InvokeByMetadata
+func (app *DefaultApp) InvokeByMetadata(moduleType, k, v string, _func string, params ...interface{}) (result interface{}, err string) {
+	server, e := app.GetServerByMetadata(moduleType, k, v)
+	if e != nil {
+		err = e.Error()
+		return
+	}
+	return server.Call(nil, _func, params...)
+}
+
+// InvokeNRByMetadata InvokeNRByMetadata
+func (app *DefaultApp) InvokeNRByMetadata(moduleType, k, v string, _func string, params ...interface{}) (err error) {
+	server, err := app.GetServerByMetadata(moduleType, k, v)
 	if err != nil {
 		return
 	}
@@ -657,6 +707,8 @@ func (app *DefaultApp) cleanupServerCache(nodeID string) {
 		}
 		log.Warning("Cleaned up dead server cache: %s", nodeID)
 	}
+	// 清除该节点的所有Metadata缓存
+	app.clearMetadataCacheForNode(nodeID)
 	app.cleanupClaims.Delete(nodeID)
 }
 
@@ -801,6 +853,81 @@ func (h *HeartbeatDetector) getNodeAddress(session module.ServerSession) string 
 		return node.Address
 	}
 	return ""
+}
+
+// Metadata缓存管理方法
+
+// addToMetadataCache 添加到Metadata索引缓存
+func (app *DefaultApp) addToMetadataCache(moduleType, key, value, nodeID string) {
+	// 获取或创建moduleType级别的map
+	moduleMapInterface, _ := app.metadataIndex.LoadOrStore(moduleType, &sync.Map{})
+	moduleMap := moduleMapInterface.(*sync.Map)
+	
+	// 获取或创建key级别的map
+	keyMapInterface, _ := moduleMap.LoadOrStore(key, &sync.Map{})
+	keyMap := keyMapInterface.(*sync.Map)
+	
+	// 存储value -> nodeID的映射
+	keyMap.Store(value, nodeID)
+}
+
+// getNodeIDFromMetadataCache 从Metadata索引缓存中获取nodeID
+func (app *DefaultApp) getNodeIDFromMetadataCache(moduleType, key, value string) string {
+	// 获取moduleType级别的map
+	moduleMapInterface, ok := app.metadataIndex.Load(moduleType)
+	if !ok {
+		return ""
+	}
+	moduleMap := moduleMapInterface.(*sync.Map)
+	
+	// 获取key级别的map
+	keyMapInterface, ok := moduleMap.Load(key)
+	if !ok {
+		return ""
+	}
+	keyMap := keyMapInterface.(*sync.Map)
+	
+	// 获取nodeID
+	nodeIDInterface, ok := keyMap.Load(value)
+	if !ok {
+		return ""
+	}
+	return nodeIDInterface.(string)
+}
+
+// removeFromMetadataCache 从Metadata索引缓存中移除
+func (app *DefaultApp) removeFromMetadataCache(moduleType, key, value string) {
+	moduleMapInterface, ok := app.metadataIndex.Load(moduleType)
+	if !ok {
+		return
+	}
+	moduleMap := moduleMapInterface.(*sync.Map)
+	
+	keyMapInterface, ok := moduleMap.Load(key)
+	if !ok {
+		return
+	}
+	keyMap := keyMapInterface.(*sync.Map)
+	
+	keyMap.Delete(value)
+}
+
+// clearMetadataCacheForNode 清除指定节点的所有Metadata缓存
+func (app *DefaultApp) clearMetadataCacheForNode(nodeID string) {
+	app.metadataIndex.Range(func(moduleKey, moduleValue interface{}) bool {
+		moduleMap := moduleValue.(*sync.Map)
+		moduleMap.Range(func(keyKey, keyValue interface{}) bool {
+			keyMap := keyValue.(*sync.Map)
+			keyMap.Range(func(valueKey, valueValue interface{}) bool {
+				if valueValue.(string) == nodeID {
+					keyMap.Delete(valueKey)
+				}
+				return true
+			})
+			return true
+		})
+		return true
+	})
 }
 
 // 获取节点心跳状态
