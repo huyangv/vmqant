@@ -24,6 +24,7 @@ type CacheSelector struct {
 
 	// registry cache - 使用 sync.Map 实现无锁并发访问
 	cache sync.Map // map[string]*serviceCacheEntry
+	runs  sync.Map // map[string]struct{}
 
 	// used to close or reload watcher
 	reload chan bool
@@ -83,6 +84,13 @@ func (c *CacheSelector) del(service string) {
 	c.cache.Delete(service)
 }
 
+func (c *CacheSelector) startRun(service string) {
+	if _, loaded := c.runs.LoadOrStore(service, struct{}{}); loaded {
+		return
+	}
+	go c.run(service)
+}
+
 func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 	// get does the actual request for a service
 	// it also caches it
@@ -109,13 +117,13 @@ func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 
 	if !loaded {
 		entry.watched.Store(true)
-		go c.run(service)
+		c.startRun(service)
 		return get(service)
 	}
 
 	// Ensure only one goroutine starts the watcher for this service.
 	if entry.watched.CompareAndSwap(false, true) {
-		go c.run(service)
+		c.startRun(service)
 	}
 
 	// cache miss or no services
@@ -332,6 +340,8 @@ func (c *CacheSelector) MarkNodeUnhealthy(service string, nodeID string) {
 // reloads the watcher if Init is called
 // and returns when Close is called
 func (c *CacheSelector) run(name string) {
+	defer c.runs.Delete(name)
+
 	for {
 		// exit early if already dead
 		if c.quit() {
