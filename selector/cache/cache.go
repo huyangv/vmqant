@@ -370,6 +370,8 @@ func (c *CacheSelector) run(name string) {
 // it returns if there's an error
 func (c *CacheSelector) watch(w registry.Watcher) error {
 	defer w.Stop()
+	done := make(chan struct{})
+	defer close(done)
 
 	// manage this loop
 	go func() {
@@ -377,6 +379,8 @@ func (c *CacheSelector) watch(w registry.Watcher) error {
 		select {
 		case <-c.exit:
 		case <-c.reload:
+		case <-done:
+			return
 		}
 
 		// stop the watcher

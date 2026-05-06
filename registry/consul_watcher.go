@@ -22,6 +22,15 @@ type consulWatcher struct {
 	services map[string][]*Service
 }
 
+func (cw *consulWatcher) stopped() bool {
+	select {
+	case <-cw.exit:
+		return true
+	default:
+		return false
+	}
+}
+
 func newConsulWatcher(cr *consulRegistry, opts ...WatchOption) (Watcher, error) {
 	var wo WatchOptions
 	for _, o := range opts {
@@ -194,14 +203,25 @@ func (cw *consulWatcher) handle(idx uint64, data interface{}) {
 	}
 
 	// add new watchers
+	var createdServices []*Service
 	for service := range services {
+		if cw.stopped() {
+			return
+		}
+
 		// Filter on watch options
 		// wo.Service: Only watch services we care about
 		if len(cw.wo.Service) > 0 && service != cw.wo.Service {
 			continue
 		}
 
+		cw.Lock()
+		if cw.stopped() {
+			cw.Unlock()
+			return
+		}
 		if _, ok := cw.watchers[service]; ok {
+			cw.Unlock()
 			continue
 		}
 		wp, err := watch.Parse(map[string]interface{}{
@@ -212,8 +232,14 @@ func (cw *consulWatcher) handle(idx uint64, data interface{}) {
 			wp.Handler = cw.serviceHandler
 			go wp.Run(cw.r.Address)
 			cw.watchers[service] = wp
-			cw.next <- &Result{Action: "create", Service: &Service{Name: service}}
+			cw.Unlock()
+			createdServices = append(createdServices, &Service{Name: service})
+		} else {
+			cw.Unlock()
 		}
+	}
+	for _, service := range createdServices {
+		cw.next <- &Result{Action: "create", Service: service}
 	}
 
 	cw.RLock()
@@ -234,12 +260,22 @@ func (cw *consulWatcher) handle(idx uint64, data interface{}) {
 	}
 
 	// remove unknown services from watchers
+	var deletedServices []*Service
+	var stoppedWatchers []*watch.Plan
+	cw.Lock()
 	for service, w := range cw.watchers {
 		if _, ok := services[service]; !ok {
-			w.Stop()
+			stoppedWatchers = append(stoppedWatchers, w)
 			delete(cw.watchers, service)
-			cw.next <- &Result{Action: "delete", Service: &Service{Name: service}}
+			deletedServices = append(deletedServices, &Service{Name: service})
 		}
+	}
+	cw.Unlock()
+	for _, w := range stoppedWatchers {
+		w.Stop()
+	}
+	for _, service := range deletedServices {
+		cw.next <- &Result{Action: "delete", Service: service}
 	}
 }
 
@@ -262,10 +298,10 @@ func (cw *consulWatcher) Stop() {
 		return
 	default:
 		close(cw.exit)
-		if cw.wp == nil {
-			return
+		if cw.wp != nil {
+			cw.wp.Stop()
 		}
-		cw.wp.Stop()
+		cw.stopServiceWatchers()
 
 		// drain results
 		for {
@@ -275,5 +311,19 @@ func (cw *consulWatcher) Stop() {
 				return
 			}
 		}
+	}
+}
+
+func (cw *consulWatcher) stopServiceWatchers() {
+	cw.Lock()
+	watchers := make([]*watch.Plan, 0, len(cw.watchers))
+	for service, w := range cw.watchers {
+		watchers = append(watchers, w)
+		delete(cw.watchers, service)
+	}
+	cw.Unlock()
+
+	for _, w := range watchers {
+		w.Stop()
 	}
 }
