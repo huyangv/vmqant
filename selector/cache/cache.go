@@ -98,27 +98,23 @@ func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 		return services, nil
 	}
 
-	// check the cache first
-	val, ok := c.cache.Load(service)
-	if !ok {
-		// cache miss - need to watch and get service
-		entry := &serviceCacheEntry{
-			services: nil,
-		}
-		entry.ttl.Store(time.Time{})
+	// check the cache first. LoadOrStore avoids duplicate entries
+	// when multiple goroutines fetch the same service concurrently.
+	newEntry := &serviceCacheEntry{
+		services: nil,
+	}
+	newEntry.ttl.Store(time.Time{})
+	val, loaded := c.cache.LoadOrStore(service, newEntry)
+	entry := val.(*serviceCacheEntry)
+
+	if !loaded {
 		entry.watched.Store(true)
-		c.cache.Store(service, entry)
 		go c.run(service)
 		return get(service)
 	}
 
-	entry := val.(*serviceCacheEntry)
-
-	// watch service if not watched - 使用原子操作检查和设置
-	if !entry.watched.Load() {
-		// 原子性地设置为 true，即使多个 goroutine 同时执行也没问题
-		// run() 方法内部会处理重复启动的情况
-		entry.watched.Store(true)
+	// Ensure only one goroutine starts the watcher for this service.
+	if entry.watched.CompareAndSwap(false, true) {
 		go c.run(service)
 	}
 
