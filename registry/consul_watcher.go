@@ -61,10 +61,27 @@ func newConsulWatcher(cr *consulRegistry, opts ...WatchOption) (Watcher, error) 
 	}
 
 	wp.Handler = cw.handle
-	go wp.Run(cr.Address)
 	cw.wp = wp
+	go cw.runPlan(wp)
 
 	return cw, nil
+}
+
+func (cw *consulWatcher) runPlan(wp *watch.Plan) {
+	if cw.r != nil && cw.r.Client != nil {
+		if err := wp.RunWithClientAndHclog(cw.r.Client, nil); err != nil && !cw.stopped() {
+			log.Warning("consul watch run error: %v", err)
+		}
+		return
+	}
+
+	address := ""
+	if cw.r != nil {
+		address = cw.r.Address
+	}
+	if err := wp.Run(address); err != nil && !cw.stopped() {
+		log.Warning("consul watch run error: %v", err)
+	}
 }
 
 func (cw *consulWatcher) serviceHandler(idx uint64, data interface{}) {
@@ -239,9 +256,9 @@ func (cw *consulWatcher) handle(idx uint64, data interface{}) {
 		})
 		if err == nil {
 			wp.Handler = cw.serviceHandler
-			go wp.Run(cw.r.Address)
 			cw.watchers[service] = wp
 			cw.Unlock()
+			go cw.runPlan(wp)
 			createdServices = append(createdServices, &Service{Name: service})
 		} else {
 			cw.Unlock()
