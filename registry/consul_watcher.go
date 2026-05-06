@@ -31,6 +31,15 @@ func (cw *consulWatcher) stopped() bool {
 	}
 }
 
+func (cw *consulWatcher) sendResult(result *Result) bool {
+	select {
+	case <-cw.exit:
+		return false
+	case cw.next <- result:
+		return true
+	}
+}
+
 func newConsulWatcher(cr *consulRegistry, opts ...WatchOption) (Watcher, error) {
 	var wo WatchOptions
 	for _, o := range opts {
@@ -136,7 +145,7 @@ func (cw *consulWatcher) serviceHandler(idx uint64, data interface{}) {
 		oldServices, ok := rservices[serviceName]
 		if !ok {
 			// does not exist? then we're creating brand new entries
-			cw.next <- &Result{Action: "create", Service: newService}
+			cw.sendResult(&Result{Action: "create", Service: newService})
 			continue
 		}
 
@@ -175,11 +184,11 @@ func (cw *consulWatcher) serviceHandler(idx uint64, data interface{}) {
 			if len(nodes) > 0 {
 				delService := oldService
 				delService.Nodes = nodes
-				cw.next <- &Result{Action: "delete", Service: delService}
+				cw.sendResult(&Result{Action: "delete", Service: delService})
 			}
 		}
 
-		cw.next <- &Result{Action: action, Service: newService}
+		cw.sendResult(&Result{Action: action, Service: newService})
 	}
 
 	// Now check old versions that may not be in new services map
@@ -187,7 +196,7 @@ func (cw *consulWatcher) serviceHandler(idx uint64, data interface{}) {
 		// old version does not exist in new version map
 		// kill it with fire!
 		if _, ok := serviceMap[old.Version]; !ok {
-			cw.next <- &Result{Action: "delete", Service: old}
+			cw.sendResult(&Result{Action: "delete", Service: old})
 		}
 	}
 
@@ -239,7 +248,7 @@ func (cw *consulWatcher) handle(idx uint64, data interface{}) {
 		}
 	}
 	for _, service := range createdServices {
-		cw.next <- &Result{Action: "create", Service: service}
+		cw.sendResult(&Result{Action: "create", Service: service})
 	}
 
 	cw.RLock()
@@ -275,7 +284,7 @@ func (cw *consulWatcher) handle(idx uint64, data interface{}) {
 		w.Stop()
 	}
 	for _, service := range deletedServices {
-		cw.next <- &Result{Action: "delete", Service: service}
+		cw.sendResult(&Result{Action: "delete", Service: service})
 	}
 }
 
@@ -289,7 +298,6 @@ func (cw *consulWatcher) Next() (*Result, error) {
 		}
 		return r, nil
 	}
-	return nil, errors.New("result chan closed")
 }
 
 func (cw *consulWatcher) Stop() {
