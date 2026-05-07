@@ -21,7 +21,7 @@ import (
 	"github.com/huyangv/vmqant/conf"
 	"github.com/huyangv/vmqant/network"
 	"math"
-	"sync"
+	"sync/atomic"
 )
 
 var notAlive = errors.New("Connection was dead")
@@ -35,19 +35,17 @@ type Client struct {
 
 	recover PackRecover //消息接收者,从上层接口传过来的 只接收正式消息(心跳包,回复包等都不要)
 
-	isStop bool
-	lock   *sync.Mutex
+	isStop atomic.Bool
 
 	// Online msg id
-	curr_id int
+	curr_id atomic.Int32
 }
 
 func NewClient(conf conf.Mqtt, recover PackRecover, r *bufio.Reader, w *bufio.Writer, conn network.Conn, alive, MaxPackSize int) *Client {
 	client := &Client{
 		recover: recover,
-		lock:    new(sync.Mutex),
-		curr_id: 0,
 	}
+	client.curr_id.Store(0)
 	client.queue = NewPackQueue(conf, r, w, conn, client.waitPack, alive, MaxPackSize)
 	return client
 }
@@ -65,9 +63,7 @@ func (c *Client) Listen_loop() (e error) {
 
 	c.queue.ReadPackInLoop()
 
-	c.lock.Lock()
-	c.isStop = true
-	c.lock.Unlock()
+	c.isStop.Store(true)
 	return
 }
 
@@ -81,12 +77,15 @@ func (c *Client) GetError() error {
 
 // Setting a mqtt pack's id.
 func (c *Client) getOnlineMsgId() int {
-	if c.curr_id == math.MaxUint16 {
-		c.curr_id = 1
-		return c.curr_id
-	} else {
-		c.curr_id = c.curr_id + 1
-		return c.curr_id
+	for {
+		cur := c.curr_id.Load()
+		next := cur + 1
+		if next > math.MaxUint16 {
+			next = 1
+		}
+		if c.curr_id.CompareAndSwap(cur, next) {
+			return int(next)
+		}
 	}
 }
 func (c *Client) waitPack(pAndErr *packAndErr) (err error) {
@@ -182,7 +181,7 @@ func (c *Client) waitPack(pAndErr *packAndErr) (err error) {
 }
 
 func (c *Client) WriteMsg(topic string, body []byte) error {
-	if c.isStop {
+	if c.isStop.Load() {
 		return fmt.Errorf("connection is closed")
 	}
 	pack := GetPubPack(0, 0, c.getOnlineMsgId(), &topic, body)

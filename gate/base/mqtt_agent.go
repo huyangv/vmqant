@@ -30,6 +30,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -52,8 +53,8 @@ type agent struct {
 	protocol_ok                  bool
 	lock                         sync.Mutex
 	lastStorageHeartbeatDataTime time.Duration //上一次发送存储心跳时间
-	revNum                       int64
-	sendNum                      int64
+	revNum                       atomic.Int64
+	sendNum                      atomic.Int64
 	connTime                     time.Time
 }
 
@@ -71,8 +72,8 @@ func (age *agent) OnInit(gate gate.Gate, conn network.Conn) error {
 	age.w = bufio.NewWriterSize(conn, gate.Options().BufSize)
 	age.isclose = false
 	age.protocol_ok = false
-	age.revNum = 0
-	age.sendNum = 0
+	age.revNum.Store(0)
+	age.sendNum.Store(0)
 	age.lastStorageHeartbeatDataTime = time.Duration(time.Now().UnixNano())
 	return nil
 }
@@ -201,10 +202,10 @@ func (age *agent) GetError() error {
 }
 
 func (age *agent) RevNum() int64 {
-	return age.revNum
+	return age.revNum.Load()
 }
 func (age *agent) SendNum() int64 {
-	return age.sendNum
+	return age.sendNum.Load()
 }
 func (age *agent) ConnTime() time.Time {
 	return age.connTime
@@ -261,9 +262,7 @@ func (age *agent) recoverworker(pack *mqtt.Pack) {
 	//路由服务
 	switch pack.GetType() {
 	case mqtt.PUBLISH:
-		age.lock.Lock()
-		age.revNum = age.revNum + 1
-		age.lock.Unlock()
+		age.revNum.Add(1)
 		pub := pack.GetVariable().(*mqtt.Publish)
 		if age.gate.GetRouteHandler() != nil {
 			needreturn, result, err := age.gate.GetRouteHandler().OnRoute(age.GetSession(), *pub.GetTopic(), pub.GetMsg())
@@ -368,7 +367,7 @@ func (age *agent) WriteMsg(topic string, body []byte) error {
 	if age.client == nil {
 		return errors.New("mqtt.Client nil")
 	}
-	age.sendNum++
+	age.sendNum.Add(1)
 	if age.gate.Options().SendMessageHook != nil {
 		bb, err := age.gate.Options().SendMessageHook(age.GetSession(), topic, body)
 		if err != nil {
