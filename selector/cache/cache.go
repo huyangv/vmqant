@@ -26,8 +26,9 @@ type CacheSelector struct {
 	runs  sync.Map // map[string]struct{}
 
 	// used to close or reload watcher
-	reload chan bool
-	exit   chan bool
+	reloadMu sync.RWMutex
+	reloadCh chan struct{}
+	exit     chan bool
 }
 
 var (
@@ -88,6 +89,20 @@ func (c *CacheSelector) startRun(service string) {
 		return
 	}
 	go c.run(service)
+}
+
+func (c *CacheSelector) reloadChannel() <-chan struct{} {
+	c.reloadMu.RLock()
+	ch := c.reloadCh
+	c.reloadMu.RUnlock()
+	return ch
+}
+
+func (c *CacheSelector) reloadWatchers() {
+	c.reloadMu.Lock()
+	close(c.reloadCh)
+	c.reloadCh = make(chan struct{})
+	c.reloadMu.Unlock()
 }
 
 func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
@@ -362,13 +377,14 @@ func (c *CacheSelector) watch(w registry.Watcher) error {
 	defer w.Stop()
 	done := make(chan struct{})
 	defer close(done)
+	reloadCh := c.reloadChannel()
 
 	// manage this loop
 	go func() {
 		// wait for exit or reload signal
 		select {
 		case <-c.exit:
-		case <-c.reload:
+		case <-reloadCh:
 		case <-done:
 			return
 		}
@@ -391,15 +407,12 @@ func (c *CacheSelector) Init(opts ...selector.Option) error {
 		o(&c.so)
 	}
 
-	// reload the watcher
-	go func() {
-		select {
-		case <-c.exit:
-			return
-		default:
-			c.reload <- true
-		}
-	}()
+	select {
+	case <-c.exit:
+		return nil
+	default:
+	}
+	c.reloadWatchers()
 
 	return nil
 }
@@ -497,11 +510,11 @@ func NewSelector(opts ...selector.Option) selector.Selector {
 	}
 
 	return &CacheSelector{
-		so:     sopts,
-		ttl:    ttl,
-		cache:  sync.Map{},
-		reload: make(chan bool, 1),
-		exit:   make(chan bool),
+		so:       sopts,
+		ttl:      ttl,
+		cache:    sync.Map{},
+		reloadCh: make(chan struct{}),
+		exit:     make(chan bool),
 	}
 }
 
