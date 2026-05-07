@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/huyangv/vmqant/log"
@@ -34,7 +35,7 @@ type NatsClient struct {
 	app               module.App
 	done              chan error
 	subs              *nats.Subscription
-	isClose           bool
+	isClose           atomic.Bool
 	session           module.ServerSession
 }
 
@@ -44,7 +45,7 @@ func NewNatsClient(app module.App, session module.ServerSession) (client *NatsCl
 	client.app = app
 	client.callbackqueueName = nats.NewInbox()
 	client.done = make(chan error)
-	client.isClose = false
+	client.isClose.Store(false)
 	go client.on_request_handle()
 	return client, nil
 }
@@ -78,8 +79,8 @@ func (c *NatsClient) Done() (err error) {
 		}
 		return true // 继续遍历
 	})
+	c.isClose.Store(true)
 	c.done <- nil
-	c.isClose = true
 	return
 }
 
@@ -89,7 +90,7 @@ func (c *NatsClient) Done() (err error) {
 */
 func (c *NatsClient) Call(callInfo *mqrpc.CallInfo, callback chan *rpcpb.ResultInfo) error {
 	//var err error
-	if c.isClose {
+	if c.isClose.Load() {
 		return fmt.Errorf("AMQPClient is closed")
 	}
 	callInfo.RPCInfo.ReplyTo = c.callbackqueueName
@@ -152,8 +153,11 @@ func (c *NatsClient) on_request_handle() (err error) {
 		c.subs.Unsubscribe()
 	}()
 
-	for !c.isClose {
+	for !c.isClose.Load() {
 		m, err := c.subs.NextMsg(time.Minute)
+		if c.isClose.Load() {
+			break
+		}
 		if err != nil && err == nats.ErrTimeout {
 			//fmt.Println(err.Error())
 			//log.Warning("NatsServer error with '%v'",err)

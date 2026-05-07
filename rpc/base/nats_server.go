@@ -15,15 +15,17 @@ package defaultrpc
 
 import (
 	"fmt"
-	"github.com/huyangv/vmqant/log"
-	"github.com/huyangv/vmqant/module"
-	"github.com/huyangv/vmqant/rpc"
-	"github.com/huyangv/vmqant/rpc/pb"
-	"github.com/nats-io/nats.go"
-	"google.golang.org/protobuf/proto"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
+
+	"github.com/huyangv/vmqant/log"
+	"github.com/huyangv/vmqant/module"
+	mqrpc "github.com/huyangv/vmqant/rpc"
+	rpcpb "github.com/huyangv/vmqant/rpc/pb"
+	"github.com/nats-io/nats.go"
+	"google.golang.org/protobuf/proto"
 )
 
 type NatsServer struct {
@@ -34,7 +36,7 @@ type NatsServer struct {
 	done      chan bool
 	stopeds   chan bool
 	subs      *nats.Subscription
-	isClose   bool
+	isClose   atomic.Bool
 }
 
 func setAddrs(addrs []string) []string {
@@ -59,7 +61,7 @@ func NewNatsServer(app module.App, s *RPCServer) (*NatsServer, error) {
 	server.server = s
 	server.done = make(chan bool)
 	server.stopeds = make(chan bool)
-	server.isClose = false
+	server.isClose.Store(false)
 	server.app = app
 	server.addr = nats.NewInbox()
 	go func() {
@@ -87,8 +89,8 @@ func safeClose(ch chan bool) {
 注销消息队列
 */
 func (s *NatsServer) Shutdown() (err error) {
+	s.isClose.Store(true)
 	safeClose(s.done)
-	s.isClose = true
 	select {
 	case <-s.stopeds:
 		//等待nats注销完成
@@ -140,8 +142,11 @@ func (s *NatsServer) on_request_handle() (err error) {
 		s.subs.Unsubscribe()
 	}()
 
-	for !s.isClose {
+	for !s.isClose.Load() {
 		m, err := s.subs.NextMsg(time.Minute)
+		if s.isClose.Load() {
+			break
+		}
 		if err != nil && err == nats.ErrTimeout {
 			//fmt.Println(err.Error())
 			//log.Warning("NatsServer error with '%v'",err)
