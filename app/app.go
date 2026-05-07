@@ -387,12 +387,32 @@ func (app *DefaultApp) OnInit(settings conf.Config) error {
 
 // OnDestroy 应用退出
 func (app *DefaultApp) OnDestroy() error {
+	if app.heartbeatDetector != nil {
+		app.heartbeatDetector.Stop()
+		app.heartbeatDetector = nil
+	}
+	app.closeServerSessions()
+
 	// 关闭 NATS 连接池
 	if app.natsPool != nil {
 		app.natsPool.Close()
 		app.natsPool = nil
 	}
 	return nil
+}
+
+func (app *DefaultApp) closeServerSessions() {
+	app.serverList.Range(func(key, value interface{}) bool {
+		app.serverList.Delete(key)
+		session, ok := value.(module.ServerSession)
+		if !ok || session == nil {
+			return true
+		}
+		if rpc := session.GetRpc(); rpc != nil {
+			_ = rpc.Done()
+		}
+		return true
+	})
 }
 
 // GetServerByID 通过服务ID获取服务实例
@@ -504,7 +524,7 @@ func (app *DefaultApp) GetServerByMetadata(moduleType string, k, v string) (s mo
 		// 缓存失效，清除并继续查找
 		app.removeFromMetadataCache(moduleType, k, v)
 	}
-	
+
 	// 从注册中心查找并更新缓存
 	return app.GetRouteServer(moduleType,
 		selector.WithStrategy(func(services []*registry.Service) selector.Next {
@@ -862,11 +882,11 @@ func (app *DefaultApp) addToMetadataCache(moduleType, key, value, nodeID string)
 	// 获取或创建moduleType级别的map
 	moduleMapInterface, _ := app.metadataIndex.LoadOrStore(moduleType, &sync.Map{})
 	moduleMap := moduleMapInterface.(*sync.Map)
-	
+
 	// 获取或创建key级别的map
 	keyMapInterface, _ := moduleMap.LoadOrStore(key, &sync.Map{})
 	keyMap := keyMapInterface.(*sync.Map)
-	
+
 	// 存储value -> nodeID的映射
 	keyMap.Store(value, nodeID)
 }
@@ -879,14 +899,14 @@ func (app *DefaultApp) getNodeIDFromMetadataCache(moduleType, key, value string)
 		return ""
 	}
 	moduleMap := moduleMapInterface.(*sync.Map)
-	
+
 	// 获取key级别的map
 	keyMapInterface, ok := moduleMap.Load(key)
 	if !ok {
 		return ""
 	}
 	keyMap := keyMapInterface.(*sync.Map)
-	
+
 	// 获取nodeID
 	nodeIDInterface, ok := keyMap.Load(value)
 	if !ok {
@@ -902,13 +922,13 @@ func (app *DefaultApp) removeFromMetadataCache(moduleType, key, value string) {
 		return
 	}
 	moduleMap := moduleMapInterface.(*sync.Map)
-	
+
 	keyMapInterface, ok := moduleMap.Load(key)
 	if !ok {
 		return
 	}
 	keyMap := keyMapInterface.(*sync.Map)
-	
+
 	keyMap.Delete(value)
 }
 
@@ -940,5 +960,8 @@ func (h *HeartbeatDetector) GetNodeHeartbeat(nodeID string) (*NodeHeartbeat, boo
 
 // 停止心跳检测
 func (h *HeartbeatDetector) Stop() {
+	defer func() {
+		_ = recover()
+	}()
 	close(h.stopChan)
 }
