@@ -32,7 +32,7 @@ func TestConnet(t *testing.T) {
 	}
 	r := bufio.NewReader(conn)
 	w := bufio.NewWriter(conn)
-	pack, err := ReadPack(r)
+	pack, err := ReadPack(r, 65535)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,7 @@ func TestConnet(t *testing.T) {
 		return
 	}
 
-	if _, err := ReadPack(r); err != nil {
+	if _, err := ReadPack(r, 65535); err != nil {
 		t.Error(err)
 	}
 }
