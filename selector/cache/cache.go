@@ -13,8 +13,27 @@ import (
 
 // serviceCacheEntry 封装服务的缓存信息
 type serviceCacheEntry struct {
+	mu       sync.RWMutex
 	services []*registry.Service
 	ttl      atomic.Value // time.Time，使用原子操作保证线程安全
+}
+
+func (e *serviceCacheEntry) hasServices() bool {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return len(e.services) > 0
+}
+
+func (e *serviceCacheEntry) servicesCopy(copyFn func([]*registry.Service) []*registry.Service) []*registry.Service {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return copyFn(e.services)
+}
+
+func (e *serviceCacheEntry) setServices(services []*registry.Service) {
+	e.mu.Lock()
+	e.services = services
+	e.mu.Unlock()
 }
 
 type CacheSelector struct {
@@ -127,7 +146,7 @@ func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 	c.startRun(service)
 
 	// cache miss or no services
-	if len(entry.services) == 0 {
+	if !entry.hasServices() {
 		return get(service)
 	}
 
@@ -136,7 +155,7 @@ func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 	if ttlVal != nil {
 		ttl := ttlVal.(time.Time)
 		if !ttl.IsZero() && time.Since(ttl) < c.ttl {
-			return c.cp(entry.services), nil
+			return entry.servicesCopy(c.cp), nil
 		}
 	}
 
@@ -155,7 +174,7 @@ func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 
 	// other error
 	// return expired cache as last resort
-	return c.cp(entry.services), nil
+	return entry.servicesCopy(c.cp), nil
 }
 
 func (c *CacheSelector) set(service string, services []*registry.Service) {
@@ -163,14 +182,11 @@ func (c *CacheSelector) set(service string, services []*registry.Service) {
 	var entry *serviceCacheEntry
 	if ok {
 		entry = val.(*serviceCacheEntry)
-		entry.services = services
-		entry.ttl.Store(time.Now().Add(c.ttl))
 	} else {
-		entry = &serviceCacheEntry{
-			services: services,
-		}
-		entry.ttl.Store(time.Now().Add(c.ttl))
+		entry = &serviceCacheEntry{}
 	}
+	entry.setServices(services)
+	entry.ttl.Store(time.Now().Add(c.ttl))
 	c.cache.Store(service, entry)
 }
 
@@ -188,8 +204,7 @@ func (c *CacheSelector) update(res *registry.Result) {
 
 	entry := val.(*serviceCacheEntry)
 	// 创建 services 切片的副本，避免直接修改共享数据
-	services := make([]*registry.Service, len(entry.services))
-	copy(services, entry.services)
+	services := entry.servicesCopy(c.cp)
 
 	if len(res.Service.Nodes) == 0 {
 		switch res.Action {
@@ -304,8 +319,7 @@ func (c *CacheSelector) MarkNodeUnhealthy(service string, nodeID string) {
 
 	entry := val.(*serviceCacheEntry)
 	// 创建 services 切片的副本，避免直接修改共享数据
-	services := make([]*registry.Service, len(entry.services))
-	copy(services, entry.services)
+	services := entry.servicesCopy(c.cp)
 
 	// 找到对应的服务和节点
 	for i, svc := range services {
@@ -536,8 +550,7 @@ func (c *CacheSelector) RemoveDeadNode(service string, nodeID string) {
 
 	entry := val.(*serviceCacheEntry)
 	// 创建 services 切片的副本，避免直接修改共享数据
-	services := make([]*registry.Service, len(entry.services))
-	copy(services, entry.services)
+	services := entry.servicesCopy(c.cp)
 
 	for i, svc := range services {
 		var aliveNodes []*registry.Node

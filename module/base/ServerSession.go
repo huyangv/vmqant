@@ -17,6 +17,8 @@ package basemodule
 
 import (
 	"context"
+	"sync/atomic"
+
 	"github.com/huyangv/vmqant/module"
 	"github.com/huyangv/vmqant/registry"
 	"github.com/huyangv/vmqant/rpc"
@@ -27,9 +29,9 @@ import (
 func NewServerSession(app module.App, name string, node *registry.Node) (module.ServerSession, error) {
 	session := &serverSession{
 		name: name,
-		node: node,
 		app:  app,
 	}
+	session.node.Store(node)
 	rpc, err := defaultrpc.NewRPCClient(app, session)
 	if err != nil {
 		return nil, err
@@ -39,19 +41,25 @@ func NewServerSession(app module.App, name string, node *registry.Node) (module.
 }
 
 type serverSession struct {
-	node *registry.Node
+	node atomic.Pointer[registry.Node]
 	name string
 	rpc  mqrpc.RPCClient
 	app  module.App
 }
 
 func (c *serverSession) GetID() string {
-	return c.node.Id
+	if node := c.GetNode(); node != nil {
+		return node.Id
+	}
+	return ""
 }
 
 // Deprecated: 因为命名规范问题函数将废弃,请用GetID代替
 func (c *serverSession) GetId() string {
-	return c.node.Id
+	if node := c.GetNode(); node != nil {
+		return node.Id
+	}
+	return ""
 }
 func (c *serverSession) GetName() string {
 	return c.name
@@ -69,11 +77,11 @@ func (c *serverSession) GetApp() module.App {
 	return c.app
 }
 func (c *serverSession) GetNode() *registry.Node {
-	return c.node
+	return c.node.Load()
 }
 
 func (c *serverSession) SetNode(node *registry.Node) (err error) {
-	c.node = node
+	c.node.Store(node)
 	return
 }
 
