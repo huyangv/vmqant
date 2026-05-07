@@ -15,7 +15,6 @@ import (
 type serviceCacheEntry struct {
 	services []*registry.Service
 	ttl      atomic.Value // time.Time，使用原子操作保证线程安全
-	watched  atomic.Bool  // bool，使用原子操作保证线程安全
 }
 
 type CacheSelector struct {
@@ -106,25 +105,11 @@ func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 		return services, nil
 	}
 
-	// check the cache first. LoadOrStore avoids duplicate entries
-	// when multiple goroutines fetch the same service concurrently.
-	newEntry := &serviceCacheEntry{
-		services: nil,
-	}
-	newEntry.ttl.Store(time.Time{})
-	val, loaded := c.cache.LoadOrStore(service, newEntry)
+	val, _ := c.cache.LoadOrStore(service, &serviceCacheEntry{})
 	entry := val.(*serviceCacheEntry)
-
-	if !loaded {
-		entry.watched.Store(true)
-		c.startRun(service)
-		return get(service)
-	}
-
-	// Ensure only one goroutine starts the watcher for this service.
-	if entry.watched.CompareAndSwap(false, true) {
-		c.startRun(service)
-	}
+	// 不论新建或复用都尝试启动 watcher；
+	// startRun 内部已经基于 c.runs 全局去重。
+	c.startRun(service)
 
 	// cache miss or no services
 	if len(entry.services) == 0 {
@@ -170,7 +155,6 @@ func (c *CacheSelector) set(service string, services []*registry.Service) {
 			services: services,
 		}
 		entry.ttl.Store(time.Now().Add(c.ttl))
-		entry.watched.Store(false)
 	}
 	c.cache.Store(service, entry)
 }
