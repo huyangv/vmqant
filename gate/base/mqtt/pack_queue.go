@@ -22,6 +22,7 @@ import (
 	"github.com/huyangv/vmqant/network"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -29,7 +30,8 @@ import (
 type PackQueue struct {
 	conf conf.Mqtt
 	// The last error in the tcp connection
-	writeError error
+	writeError     error
+	writeErrorLock sync.RWMutex
 	// Notice read the error
 	fch       chan struct{}
 	writelock sync.Mutex
@@ -40,11 +42,11 @@ type PackQueue struct {
 
 	conn network.Conn
 
-	alive int
+	alive atomic.Int32
 
 	MaxPackSize int // mqtt包最大长度
 
-	status int
+	status atomic.Int32
 }
 
 type packAndErr struct {
@@ -79,21 +81,42 @@ func NewPackQueue(conf conf.Mqtt, r *bufio.Reader, w *bufio.Writer, conn network
 		MaxPackSize = 65535
 	}
 	alive = int(float32(alive)*1.5 + 1)
-	return &PackQueue{
+	queue := &PackQueue{
 		conf:        conf,
-		alive:       alive,
 		MaxPackSize: MaxPackSize,
 		r:           r,
 		w:           w,
 		conn:        conn,
 		recover:     recover,
 		fch:         make(chan struct{}, 256),
-		status:      CONNECTED,
 	}
+	queue.alive.Store(int32(alive))
+	queue.status.Store(CONNECTED)
+	return queue
 }
 
 func (queue *PackQueue) isConnected() bool {
-	return queue.status == CONNECTED
+	return queue.status.Load() == CONNECTED
+}
+
+func (queue *PackQueue) getWriteError() error {
+	queue.writeErrorLock.RLock()
+	defer queue.writeErrorLock.RUnlock()
+	return queue.writeError
+}
+
+func (queue *PackQueue) setWriteError(err error) {
+	queue.writeErrorLock.Lock()
+	defer queue.writeErrorLock.Unlock()
+	queue.writeError = err
+}
+
+func (queue *PackQueue) GetError() error {
+	return queue.getWriteError()
+}
+
+func (queue *PackQueue) getAlive() int {
+	return int(queue.alive.Load())
 }
 
 // Get a read pack queue
@@ -135,9 +158,9 @@ func (queue *PackQueue) WritePack(pack *Pack) (err error) {
 		queue.writelock.Unlock()
 		return errors.New("disconnect")
 	}
-	if queue.writeError != nil {
+	if writeError := queue.getWriteError(); writeError != nil {
 		queue.writelock.Unlock()
-		return queue.writeError
+		return writeError
 	}
 	if queue.w.Available() <= 0 {
 		queue.writelock.Unlock()
@@ -159,7 +182,7 @@ func (queue *PackQueue) SetAlive(alive int) error {
 		alive = queue.conf.ReadTimeout
 	}
 	alive = int(float32(alive)*1.5 + 1)
-	queue.alive = alive
+	queue.alive.Store(int32(alive))
 	return nil
 }
 
@@ -170,8 +193,9 @@ func (queue *PackQueue) ReadPackInLoop() {
 	p := new(packAndErr)
 loop:
 	for queue.isConnected() {
-		if queue.alive > 0 {
-			timeout := int(float64(queue.alive) * 3)
+		alive := queue.getAlive()
+		if alive > 0 {
+			timeout := int(float64(alive) * 3)
 			if timeout > 60 {
 				timeout = 60
 			} else if timeout < 10 {
@@ -208,9 +232,9 @@ func (queue *PackQueue) CloseFch() {
 
 // Close the all of queue's channels
 func (queue *PackQueue) Close(err error) error {
-	queue.writeError = err
+	queue.setWriteError(err)
 	queue.CloseFch()
-	queue.status = CLOSED
+	queue.status.Store(CLOSED)
 	if queue.conn != nil {
 		//再关闭一下,防止文件描述符发生泄漏
 		queue.conn.Close()

@@ -72,7 +72,7 @@ func (c *Client) GetError() error {
 	if c.queue == nil {
 		return nil
 	}
-	return c.queue.writeError
+	return c.queue.GetError()
 }
 
 // Setting a mqtt pack's id.
