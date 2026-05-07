@@ -25,6 +25,7 @@ import (
 	"reflect"
 	"runtime"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -76,7 +77,7 @@ func (s *RPCServer) SetGoroutineControl(control mqrpc.GoroutineControl) {
 获取当前正在执行的goroutine 数量
 */
 func (s *RPCServer) GetExecuting() int64 {
-	return s.executing
+	return atomic.LoadInt64(&s.executing)
 }
 
 // GetFunction
@@ -218,10 +219,10 @@ func (s *RPCServer) _runFunc(start time.Time, functionInfo *mqrpc.FunctionInfo, 
 	}
 
 	s.wg.Add(1)
-	s.executing++
+	atomic.AddInt64(&s.executing, 1)
 	defer func() {
 		s.wg.Add(-1)
-		s.executing--
+		atomic.AddInt64(&s.executing, -1)
 		if s.control != nil {
 			s.control.Finish()
 		}
