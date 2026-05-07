@@ -186,7 +186,11 @@ func (s *RPCServer) doCallback(callInfo *mqrpc.CallInfo) {
 	} else {
 		//对于不需要回复的消息,可以判断一下是否出现错误，打印一些警告
 		if callInfo.Result.Error != "" {
-			log.Warning("rpc callback erro :\n%s", callInfo.Result.Error)
+			if callInfo.Result.Error == "No Sesssion found" {
+				log.Debug("rpc callback ignored noisy err: %s", callInfo.Result.Error)
+			} else {
+				log.Warning("rpc callback erro :\n%s", callInfo.Result.Error)
+			}
 		}
 	}
 	if s.app.Options().ServerRPCHandler != nil {
