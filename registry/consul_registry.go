@@ -218,6 +218,7 @@ func (c *consulRegistry) Register(s *Service, opts ...RegisterOption) error {
 		ID:      node.Id,
 		Name:    s.Name,
 		Tags:    tags,
+		Meta:    node.Metadata,
 		Port:    node.Port,
 		Address: node.Address,
 		Check:   check,
@@ -313,7 +314,7 @@ func (c *consulRegistry) GetService(name string) ([]*Service, error) {
 			Id:       id,
 			Address:  address,
 			Port:     s.Service.Port,
-			Metadata: decodeMetadata(s.Service.Tags),
+			Metadata: decodeServiceMetadata(s.Service.Tags, s.Service.Meta),
 		})
 	}
 

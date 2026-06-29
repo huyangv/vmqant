@@ -144,6 +144,14 @@ func decodeMetadata(tags []string) map[string]string {
 	return md
 }
 
+func decodeServiceMetadata(tags []string, meta map[string]string) map[string]string {
+	md := decodeMetadata(tags)
+	for k, v := range meta {
+		md[k] = v
+	}
+	return md
+}
+
 func encodeVersion(v string) []string {
 	return []string{"v-" + encode([]byte(v))}
 }

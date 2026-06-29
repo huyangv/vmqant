@@ -118,6 +118,32 @@ func TestConsul_GetService_WithHealthyServiceNodes(t *testing.T) {
 	}
 }
 
+func TestConsul_GetService_WithNativeServiceMeta(t *testing.T) {
+	serviceEntry := newServiceEntry(
+		"node-name", "node-address", "service-name", "v1.0.0",
+		[]*consul.HealthCheck{
+			newHealthCheck("node-name", "service-name", "passing"),
+		},
+	)
+	serviceEntry.Service.Meta = map[string]string{"sid": "10001"}
+
+	cr, cl := newConsulTestRegistry(&mockRegistry{
+		status: 200,
+		body:   newServiceList([]*consul.ServiceEntry{serviceEntry}),
+		url:    "/v1/health/service/service-name",
+	})
+	defer cl()
+
+	svc, err := cr.GetService("service-name")
+	if err != nil {
+		t.Fatal("Unexpected error", err)
+	}
+
+	if got := svc[0].Nodes[0].Metadata["sid"]; got != "10001" {
+		t.Fatalf("Expected native meta sid to be `%s`, got `%s`.", "10001", got)
+	}
+}
+
 func TestConsul_GetService_WithUnhealthyServiceNode(t *testing.T) {
 	// warning is still seen as healthy, critical is not
 	svcs := []*consul.ServiceEntry{

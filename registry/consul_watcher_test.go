@@ -22,6 +22,23 @@ func TestHealthyServiceHandler(t *testing.T) {
 	}
 }
 
+func TestHealthyServiceHandlerWithNativeServiceMeta(t *testing.T) {
+	watcher := newWatcher()
+	serviceEntry := newServiceEntry(
+		"node-name", "node-address", "service-name", "v1.0.0",
+		[]*api.HealthCheck{
+			newHealthCheck("node-name", "service-name", "passing"),
+		},
+	)
+	serviceEntry.Service.Meta = map[string]string{"sid": "10001"}
+
+	watcher.serviceHandler(1234, []*api.ServiceEntry{serviceEntry})
+
+	if got := watcher.services["service-name"][0].Nodes[0].Metadata["sid"]; got != "10001" {
+		t.Errorf("Expected native meta sid to be `%s`, got `%s`.", "10001", got)
+	}
+}
+
 func TestUnhealthyServiceHandler(t *testing.T) {
 	watcher := newWatcher()
 	serviceEntry := newServiceEntry(
