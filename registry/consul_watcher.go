@@ -31,11 +31,18 @@ func (cw *consulWatcher) stopped() bool {
 	}
 }
 
+// sendResult 发布独立事件，防止消费者修改监听器保存的快照。
 func (cw *consulWatcher) sendResult(result *Result) bool {
+	// 已退出时直接返回，避免为无法发送的事件分配快照。
+	if cw.stopped() {
+		return false
+	}
+	event := *result
+	event.Service = result.Service.Clone()
 	select {
 	case <-cw.exit:
 		return false
-	case cw.next <- result:
+	case cw.next <- &event:
 		return true
 	}
 }
@@ -199,9 +206,10 @@ func (cw *consulWatcher) serviceHandler(idx uint64, data interface{}) {
 
 			// it's an update rather than creation
 			if len(nodes) > 0 {
-				delService := oldService
+				// 删除事件只包含下线节点，不修改上一轮完整快照。
+				delService := *oldService
 				delService.Nodes = nodes
-				cw.sendResult(&Result{Action: "delete", Service: delService})
+				cw.sendResult(&Result{Action: "delete", Service: &delService})
 			}
 		}
 

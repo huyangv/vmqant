@@ -72,6 +72,36 @@ func TestUnhealthyNodeServiceHandler(t *testing.T) {
 	}
 }
 
+// TestServiceHandlerPreservesSnapshots 验证节点删除不修改旧快照或已发布事件。
+func TestServiceHandlerPreservesSnapshots(t *testing.T) {
+	watcher := newWatcher()
+	a := newServiceEntry("a", "address-a", "game", "1", nil)
+	a.Service.ID = "a"
+	b := newServiceEntry("b", "address-b", "game", "1", nil)
+	b.Service.ID = "b"
+	watcher.serviceHandler(1, []*api.ServiceEntry{a, b})
+	published := <-watcher.next
+	previous := watcher.services["game"][0]
+
+	watcher.serviceHandler(2, []*api.ServiceEntry{a})
+	deletion := <-watcher.next
+	update := <-watcher.next
+	if len(previous.Nodes) != 2 || len(published.Service.Nodes) != 2 {
+		t.Fatal("deleting b modified the previous [a,b] snapshot")
+	}
+	if deletion.Action != "delete" || len(deletion.Service.Nodes) != 1 || deletion.Service.Nodes[0].Id != "b" {
+		t.Fatalf("unexpected deletion: %+v", deletion)
+	}
+	if update.Action != "update" || len(update.Service.Nodes) != 1 || update.Service.Nodes[0].Id != "a" {
+		t.Fatalf("unexpected update: %+v", update)
+	}
+	// 消费者修改事件时，监听器自己的快照也必须保持完整。
+	update.Service.Nodes[0].Id = "changed"
+	if got := watcher.services["game"][0].Nodes[0].Id; got != "a" {
+		t.Fatalf("event consumer changed watcher snapshot to %q", got)
+	}
+}
+
 func newWatcher() *consulWatcher {
 	return &consulWatcher{
 		exit:     make(chan bool),

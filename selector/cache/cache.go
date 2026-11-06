@@ -9,19 +9,32 @@ import (
 	"github.com/huyangv/vmqant/log"
 	"github.com/huyangv/vmqant/registry"
 	"github.com/huyangv/vmqant/selector"
+	"golang.org/x/sync/singleflight"
 )
 
 // serviceCacheEntry 封装服务的缓存信息
 type serviceCacheEntry struct {
 	mu       sync.RWMutex
 	services []*registry.Service
-	ttl      atomic.Value // time.Time，使用原子操作保证线程安全
+	ttl      atomic.Value // time.Time，缓存截止时间
 }
 
 func (e *serviceCacheEntry) hasServices() bool {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return len(e.services) > 0
+}
+
+// valid 检查缓存是否有服务且尚未到达截止时间。
+func (e *serviceCacheEntry) valid() bool {
+	if !e.hasServices() {
+		return false
+	}
+	if value := e.ttl.Load(); value != nil {
+		deadline := value.(time.Time)
+		return !deadline.IsZero() && time.Now().Before(deadline)
+	}
+	return false
 }
 
 func (e *serviceCacheEntry) servicesCopy(copyFn func([]*registry.Service) []*registry.Service) []*registry.Service {
@@ -41,8 +54,9 @@ type CacheSelector struct {
 	ttl time.Duration
 
 	// registry cache - 使用 sync.Map 实现无锁并发访问
-	cache sync.Map // map[string]*serviceCacheEntry
-	runs  sync.Map // map[string]struct{}
+	cache   sync.Map           // map[string]*serviceCacheEntry
+	runs    sync.Map           // map[string]struct{}
+	queries singleflight.Group // 按服务名合并正在进行的注册中心查询
 
 	// used to close or reload watcher
 	reloadMu sync.RWMutex
@@ -63,37 +77,11 @@ func (c *CacheSelector) quit() bool {
 	}
 }
 
-// cp copies a service. Because we're caching handing back pointers would
-// create a race condition, so we do this instead
-// its fast enough
+// cp 为缓存或调用方创建独立服务副本。
 func (c *CacheSelector) cp(current []*registry.Service) []*registry.Service {
 	var services []*registry.Service
-
 	for _, service := range current {
-		// copy service
-		s := new(registry.Service)
-		*s = *service
-
-		// copy nodes
-		var nodes []*registry.Node
-		for _, node := range service.Nodes {
-			n := new(registry.Node)
-			*n = *node
-			nodes = append(nodes, n)
-		}
-		s.Nodes = nodes
-
-		// copy endpoints
-		var eps []*registry.Endpoint
-		for _, ep := range service.Endpoints {
-			e := new(registry.Endpoint)
-			*e = *ep
-			eps = append(eps, e)
-		}
-		s.Endpoints = eps
-
-		// append service
-		services = append(services, s)
+		services = append(services, service.Clone())
 	}
 
 	return services
@@ -124,21 +112,32 @@ func (c *CacheSelector) reloadWatchers() {
 	c.reloadMu.Unlock()
 }
 
-func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
-	// get does the actual request for a service
-	// it also caches it
-	get := func(service string) ([]*registry.Service, error) {
-		// ask the registry
+// query 合并同名在途查询，返回值由每个调用方分别持有。
+func (c *CacheSelector) query(service string) ([]*registry.Service, error) {
+	result, err, _ := c.queries.Do(service, func() (interface{}, error) {
+		// 等待进入查询时，其他请求或监听事件可能已经填充缓存。
+		if value, ok := c.cache.Load(service); ok {
+			entry := value.(*serviceCacheEntry)
+			if entry.valid() {
+				return entry.servicesCopy(c.cp), nil
+			}
+		}
 		services, err := c.so.Registry.GetService(service)
 		if err != nil {
 			return nil, err
 		}
 
-		// cache results
-		c.set(service, c.cp(services))
+		c.set(service, services)
 		return services, nil
+	})
+	if err != nil {
+		return nil, err
 	}
+	return c.cp(result.([]*registry.Service)), nil
+}
 
+// get 优先读取缓存，未命中和过期时共用同名查询。
+func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 	val, _ := c.cache.LoadOrStore(service, &serviceCacheEntry{})
 	entry := val.(*serviceCacheEntry)
 	// 不论新建或复用都尝试启动 watcher；
@@ -147,20 +146,15 @@ func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 
 	// cache miss or no services
 	if !entry.hasServices() {
-		return get(service)
+		return c.query(service)
 	}
 
-	// got cache but lets check ttl - 使用原子操作读取
-	ttlVal := entry.ttl.Load()
-	if ttlVal != nil {
-		ttl := ttlVal.(time.Time)
-		if !ttl.IsZero() && time.Since(ttl) < c.ttl {
-			return entry.servicesCopy(c.cp), nil
-		}
+	if entry.valid() {
+		return entry.servicesCopy(c.cp), nil
 	}
 
 	// expired entry so get service
-	services, err := get(service)
+	services, err := c.query(service)
 
 	// no error then return error
 	if err == nil {
@@ -177,6 +171,7 @@ func (c *CacheSelector) get(service string) ([]*registry.Service, error) {
 	return entry.servicesCopy(c.cp), nil
 }
 
+// set 保存独立快照，避免写入者继续修改缓存中的对象。
 func (c *CacheSelector) set(service string, services []*registry.Service) {
 	val, ok := c.cache.Load(service)
 	var entry *serviceCacheEntry
@@ -185,11 +180,12 @@ func (c *CacheSelector) set(service string, services []*registry.Service) {
 	} else {
 		entry = &serviceCacheEntry{}
 	}
-	entry.setServices(services)
+	entry.setServices(c.cp(services))
 	entry.ttl.Store(time.Now().Add(c.ttl))
 	c.cache.Store(service, entry)
 }
 
+// update 在事件副本上合并节点，不修改发布者提供的对象。
 func (c *CacheSelector) update(res *registry.Result) {
 	if res == nil || res.Service == nil {
 		return
@@ -201,6 +197,9 @@ func (c *CacheSelector) update(res *registry.Result) {
 		// unless there was already a lookup
 		return
 	}
+	event := *res
+	event.Service = res.Service.Clone()
+	res = &event
 
 	entry := val.(*serviceCacheEntry)
 	// 创建 services 切片的副本，避免直接修改共享数据
