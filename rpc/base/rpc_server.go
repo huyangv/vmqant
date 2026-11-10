@@ -15,6 +15,7 @@ package defaultrpc
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/huyangv/vmqant/log"
 	"github.com/huyangv/vmqant/module"
@@ -206,7 +207,7 @@ func (s *RPCServer) _errorCallback(start time.Time, callInfo *mqrpc.CallInfo, Ci
 	callInfo.ExecTime = time.Since(start).Nanoseconds()
 	s.doCallback(callInfo)
 	if s.listener != nil {
-		s.listener.OnError(callInfo.RPCInfo.Fn, callInfo, fmt.Errorf(Error))
+		s.listener.OnError(callInfo.RPCInfo.Fn, callInfo, errors.New(Error))
 	}
 }
 

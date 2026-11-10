@@ -59,12 +59,13 @@ func (p *protocolMarshalImp) GetData() []byte {
 
 // 心跳状态
 type NodeHeartbeat struct {
-	NodeID    string    `json:"node_id"`
-	Service   string    `json:"service"`
-	LastSeen  time.Time `json:"last_seen"`
-	IsAlive   bool      `json:"is_alive"`
-	FailCount int       `json:"fail_count"`
-	Address   string    `json:"address"`
+	session   module.ServerSession // 心跳来源，用于拒绝旧实例的迟到结果
+	NodeID    string               `json:"node_id"`
+	Service   string               `json:"service"`
+	LastSeen  time.Time            `json:"last_seen"`
+	IsAlive   bool                 `json:"is_alive"`
+	FailCount int                  `json:"fail_count"`
+	Address   string               `json:"address"`
 }
 
 // 心跳检测器
@@ -72,8 +73,11 @@ type HeartbeatDetector struct {
 	app           module.App
 	heartbeats    sync.Map // map[string]*NodeHeartbeat
 	heartbeatChan chan *NodeHeartbeat
-	stopChan      chan bool
-	mutex         sync.RWMutex
+	stopOnce      sync.Once
+	ctx           context.Context
+	cancel        context.CancelFunc
+	done          chan struct{}
+	checks        sync.WaitGroup
 
 	// 心跳配置
 	interval     time.Duration
@@ -223,10 +227,13 @@ func NewApp(opts ...module.Option) module.App {
 // DefaultApp 默认应用
 type DefaultApp struct {
 	//module.App
-	version       string
-	settings      conf.Config
-	serverList    sync.Map
-	cleanupClaims sync.Map // 新增：用于声明清理权，避免重复清理
+	version     string
+	settings    conf.Config
+	serverList  sync.Map
+	sessionsMu  sync.Mutex
+	closing     bool
+	cleanupWG   sync.WaitGroup // 包含已摘除但仍在关闭的 session
+	destroyOnce sync.Once
 	// Metadata索引缓存: map[moduleType][metadataKey][metadataValue]nodeId
 	metadataIndex sync.Map // map[string]map[string]map[string]string
 	opts          module.Options
@@ -360,17 +367,8 @@ func (app *DefaultApp) GetRPCSerialize() map[string]module.RPCSerialize {
 
 // Watcher Watcher
 func (app *DefaultApp) Watcher(node *registry.Node) {
-	//把注销的服务ServerSession删除掉
-	if _, loaded := app.cleanupClaims.LoadOrStore(node.Id, struct{}{}); loaded {
-		return // 已有协程在清理或已清理过，避免重复 go版本升级后 可用LoadAndDelete替代该方案
-	}
 	log.Warning("Watcher node id %v, node addr %v", node.Id, node.Address)
-	session, ok := app.serverList.Load(node.Id)
-	if ok && session != nil {
-		session.(module.ServerSession).GetRpc().Done()
-		app.serverList.Delete(node.Id)
-	}
-	app.cleanupClaims.Delete(node.Id)
+	app.cleanupServerCache(node.Id)
 }
 
 // Configure 重设应用配置
@@ -387,37 +385,88 @@ func (app *DefaultApp) OnInit(settings conf.Config) error {
 
 // OnDestroy 应用退出
 func (app *DefaultApp) OnDestroy() error {
-	if app.heartbeatDetector != nil {
-		app.heartbeatDetector.Stop()
-		app.heartbeatDetector = nil
-	}
-	app.closeServerSessions()
-
-	// 关闭 NATS 连接池
-	if app.natsPool != nil {
-		app.natsPool.Close()
-		app.natsPool = nil
-	}
+	app.destroyOnce.Do(func() {
+		app.sessionsMu.Lock()
+		app.closing = true
+		h := app.heartbeatDetector
+		app.sessionsMu.Unlock()
+		// 先取消心跳，再关闭 RPC，最后等待心跳，避免互相等待。
+		if h != nil {
+			h.stop()
+		}
+		app.closeServerSessions()
+		if h != nil {
+			h.Stop()
+		}
+		if app.natsPool != nil {
+			app.natsPool.Close()
+		}
+	})
 	return nil
 }
 
+// closeServerSessions 摘除所有节点并在锁外等待清理完成。
 func (app *DefaultApp) closeServerSessions() {
+	app.sessionsMu.Lock()
+	app.closing = true
 	app.serverList.Range(func(key, value interface{}) bool {
-		app.serverList.Delete(key)
-		session, ok := value.(module.ServerSession)
-		if !ok || session == nil {
-			return true
-		}
+		app.detachSessionLocked(key.(string))
+		return true
+	})
+	app.sessionsMu.Unlock()
+	app.cleanupWG.Wait()
+}
+
+// detachSessionLocked 在生命周期锁内登记清理，实际关闭在锁外执行。
+func (app *DefaultApp) detachSessionLocked(nodeID string) {
+	value, ok := app.serverList.Load(nodeID)
+	if !ok {
+		return
+	}
+	app.serverList.Delete(nodeID)
+	session, ok := value.(module.ServerSession)
+	if !ok || session == nil {
+		return
+	}
+	app.cleanupWG.Add(1)
+	go func() {
+		defer app.cleanupWG.Done()
 		if rpc := session.GetRpc(); rpc != nil {
 			_ = rpc.Done()
 		}
-		return true
-	})
+		log.Warning("Cleaned up dead server cache: %s", nodeID)
+	}()
+}
+
+// getOrCreateSession 串行获取和创建，防止并发覆盖遗留 RPC client。
+func (app *DefaultApp) getOrCreateSession(serviceName string, node *registry.Node) (module.ServerSession, error) {
+	app.sessionsMu.Lock()
+	defer app.sessionsMu.Unlock()
+	if app.closing {
+		return nil, errors.New("app is closing")
+	}
+	if value, ok := app.serverList.Load(node.Id); ok {
+		session := value.(module.ServerSession)
+		session.SetNode(node)
+		return session, nil
+	}
+	session, err := basemodule.NewServerSession(app, serviceName, node)
+	if err != nil {
+		return nil, err
+	}
+	app.serverList.Store(node.Id, session)
+	return session, nil
 }
 
 // GetServerByID 通过服务ID获取服务实例
 func (app *DefaultApp) GetServerByID(serverID string) (module.ServerSession, error) {
+	app.sessionsMu.Lock()
+	if app.closing {
+		app.sessionsMu.Unlock()
+		return nil, errors.New("app is closing")
+	}
 	session, ok := app.serverList.Load(serverID)
+	app.sessionsMu.Unlock()
 	if !ok {
 		serviceName := serverID
 		s := strings.Split(serverID, "@")
@@ -454,17 +503,7 @@ func (app *DefaultApp) GetServerBySelector(serviceName string, opts ...selector.
 	if err != nil {
 		return nil, err
 	}
-	session, ok := app.serverList.Load(node.Id)
-	if !ok {
-		s, err := basemodule.NewServerSession(app, serviceName, node)
-		if err != nil {
-			return nil, err
-		}
-		app.serverList.Store(node.Id, s)
-		return s, nil
-	}
-	session.(module.ServerSession).SetNode(node)
-	return session.(module.ServerSession), nil
+	return app.getOrCreateSession(serviceName, node)
 
 }
 
@@ -479,18 +518,11 @@ func (app *DefaultApp) GetServersByType(serviceName string) []module.ServerSessi
 	for _, service := range services {
 		//log.TInfo(nil,"GetServersByType3 %v %v",Type,service.Nodes)
 		for _, node := range service.Nodes {
-			session, ok := app.serverList.Load(node.Id)
-			if !ok {
-				s, err := basemodule.NewServerSession(app, serviceName, node)
-				if err != nil {
-					log.Warning("NewServerSession %v", err)
-				} else {
-					app.serverList.Store(node.Id, s)
-					sessions = append(sessions, s)
-				}
+			session, err := app.getOrCreateSession(serviceName, node)
+			if err != nil {
+				log.Warning("NewServerSession %v", err)
 			} else {
-				session.(module.ServerSession).SetNode(node)
-				sessions = append(sessions, session.(module.ServerSession))
+				sessions = append(sessions, session)
 			}
 		}
 	}
@@ -710,39 +742,44 @@ func (app *DefaultApp) InvokeWithCleanup(module module.RPCModule, moduleType str
 
 	// 检查是否为超时或关闭，如果是则清理缓存
 	if err == "deadline exceeded" || err == "client closed" {
-		app.cleanupServerCache(server.GetNode().Id)
+		app.cleanupServerSession(server.GetNode().Id, server)
 	}
 	return
 }
 
 // 清理指定节点ID的服务器缓存，并联动清理selector缓存
 func (app *DefaultApp) cleanupServerCache(nodeID string) {
-	if _, loaded := app.cleanupClaims.LoadOrStore(nodeID, struct{}{}); loaded {
-		return // 已有协程在清理或已清理过，避免重复 go版本升级后 可用LoadAndDelete替代该方案
-	}
-	if session, ok := app.serverList.Load(nodeID); ok {
-		app.serverList.Delete(nodeID)
-		if s, ok := session.(module.ServerSession); ok {
-			s.GetRpc().Done()
-		}
-		log.Warning("Cleaned up dead server cache: %s", nodeID)
-	}
-	// 清除该节点的所有Metadata缓存
+	app.sessionsMu.Lock()
+	app.detachSessionLocked(nodeID)
 	app.clearMetadataCacheForNode(nodeID)
-	app.cleanupClaims.Delete(nodeID)
+	app.sessionsMu.Unlock()
+}
+
+// cleanupServerSession 仅清理产生失败的原实例，避免误关同 ID 的新实例。
+func (app *DefaultApp) cleanupServerSession(nodeID string, expected module.ServerSession) {
+	app.sessionsMu.Lock()
+	defer app.sessionsMu.Unlock()
+	if current, ok := app.serverList.Load(nodeID); !ok || current != expected {
+		return
+	}
+	app.detachSessionLocked(nodeID)
+	app.clearMetadataCacheForNode(nodeID)
 }
 
 // 启动心跳检测
 func (app *DefaultApp) startHeartbeatDetector() {
-	if app.heartbeatDetector != nil {
+	app.sessionsMu.Lock()
+	defer app.sessionsMu.Unlock()
+	if app.closing || app.heartbeatDetector != nil {
 		return // 已经启动
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
 	app.heartbeatDetector = &HeartbeatDetector{
+		ctx: ctx, cancel: cancel, done: make(chan struct{}),
 		app:           app,
 		heartbeats:    sync.Map{},
 		heartbeatChan: make(chan *NodeHeartbeat, 100),
-		stopChan:      make(chan bool),
 		interval:      5 * time.Second, // 5秒检测一次
 		timeout:       3 * time.Second, // 3秒超时
 		maxFailCount:  3,               // 连续3次失败标记为死亡
@@ -756,12 +793,13 @@ func (app *DefaultApp) startHeartbeatDetector() {
 
 // 心跳检测主循环
 func (h *HeartbeatDetector) run() {
+	defer close(h.done)
 	ticker := time.NewTicker(h.interval)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-h.stopChan:
+		case <-h.ctx.Done():
 			log.Info("Heartbeat detector stopped")
 			return
 		case <-ticker.C:
@@ -779,7 +817,14 @@ func (h *HeartbeatDetector) checkAllNodes() {
 			nodeID := key.(string)
 			session := value.(module.ServerSession)
 
-			go h.checkNodeHeartbeat(nodeID, session)
+			if h.ctx.Err() != nil {
+				return false
+			}
+			h.checks.Add(1)
+			go func() {
+				defer h.checks.Done()
+				h.checkNodeHeartbeat(nodeID, session)
+			}()
 			return true
 		})
 	}
@@ -787,11 +832,17 @@ func (h *HeartbeatDetector) checkAllNodes() {
 
 // 检查单个节点心跳
 func (h *HeartbeatDetector) checkNodeHeartbeat(nodeID string, session module.ServerSession) {
-	ctx, cancel := context.WithTimeout(context.Background(), h.timeout)
+	ctx, cancel := context.WithTimeout(h.ctx, h.timeout)
 	defer cancel()
 
+	if ctx.Err() != nil {
+		return
+	}
 	// 尝试发送心跳请求，使用Heartbeat()方法
 	_, err := session.Call(ctx, "RpcHeartbeat")
+	if h.ctx.Err() != nil {
+		return
+	}
 	if err != "" {
 		log.Error("Heartbeat failed for node %s: %s", nodeID, err)
 		addFailCount := 1
@@ -799,15 +850,17 @@ func (h *HeartbeatDetector) checkNodeHeartbeat(nodeID string, session module.Ser
 			addFailCount = 3
 		}
 		h.reportHeartbeat(&NodeHeartbeat{
+			session:   session,
 			NodeID:    nodeID,
 			Service:   h.getServiceName(session),
 			LastSeen:  time.Now(),
 			IsAlive:   false,
-			FailCount: h.getFailCount(nodeID) + addFailCount,
+			FailCount: h.getFailCount(nodeID, session) + addFailCount,
 			Address:   h.getNodeAddress(session),
 		})
 	} else {
 		h.reportHeartbeat(&NodeHeartbeat{
+			session:   session,
 			NodeID:    nodeID,
 			Service:   h.getServiceName(session),
 			LastSeen:  time.Now(),
@@ -820,11 +873,22 @@ func (h *HeartbeatDetector) checkNodeHeartbeat(nodeID string, session module.Ser
 
 // 报告心跳状态
 func (h *HeartbeatDetector) reportHeartbeat(heartbeat *NodeHeartbeat) {
-	h.heartbeatChan <- heartbeat
+	select {
+	case <-h.ctx.Done():
+	case h.heartbeatChan <- heartbeat:
+	}
 }
 
 // 更新心跳状态
 func (h *HeartbeatDetector) updateHeartbeat(heartbeat *NodeHeartbeat) {
+	if app, ok := h.app.(*DefaultApp); ok {
+		app.sessionsMu.Lock()
+		defer app.sessionsMu.Unlock()
+		// 校验与状态更新、标记和摘除保持原子，拒绝旧实例迟到结果。
+		if current, found := app.serverList.Load(heartbeat.NodeID); !found || current != heartbeat.session {
+			return
+		}
+	}
 	// 更新内存中的心跳状态
 	h.heartbeats.Store(heartbeat.NodeID, heartbeat)
 
@@ -838,15 +902,19 @@ func (h *HeartbeatDetector) updateHeartbeat(heartbeat *NodeHeartbeat) {
 
 		// 通知应用清理缓存
 		if app, ok := h.app.(*DefaultApp); ok {
-			app.cleanupServerCache(heartbeat.NodeID)
+			app.detachSessionLocked(heartbeat.NodeID)
+			app.clearMetadataCacheForNode(heartbeat.NodeID)
 		}
 	}
 }
 
 // 获取节点失败计数
-func (h *HeartbeatDetector) getFailCount(nodeID string) int {
+func (h *HeartbeatDetector) getFailCount(nodeID string, session module.ServerSession) int {
 	if hb, ok := h.heartbeats.Load(nodeID); ok {
-		return hb.(*NodeHeartbeat).FailCount
+		state := hb.(*NodeHeartbeat)
+		if state.session == session {
+			return state.FailCount
+		}
 	}
 	return 0
 }
@@ -958,10 +1026,14 @@ func (h *HeartbeatDetector) GetNodeHeartbeat(nodeID string) (*NodeHeartbeat, boo
 	return nil, false
 }
 
-// 停止心跳检测
+// stop 取消检测但不等待，供关服先解除 RPC 依赖。
+func (h *HeartbeatDetector) stop() {
+	h.stopOnce.Do(func() { h.cancel() })
+}
+
+// Stop 幂等停止并等待主循环及所有派生检查。
 func (h *HeartbeatDetector) Stop() {
-	defer func() {
-		_ = recover()
-	}()
-	close(h.stopChan)
+	h.stop()
+	<-h.done
+	h.checks.Wait()
 }

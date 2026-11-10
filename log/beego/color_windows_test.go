@@ -37,7 +37,7 @@ func TestWritePlanText(t *testing.T) {
 	inner := bytes.NewBufferString("")
 	w := NewAnsiColorWriter(inner)
 	expected := "plain text"
-	fmt.Fprintf(w, expected)
+	fmt.Fprint(w, expected)
 	actual := inner.String()
 	if actual != expected {
 		t.Errorf("Get %q, want %q", actual, expected)
@@ -50,7 +50,7 @@ func TestWriteParseText(t *testing.T) {
 
 	inputTail := "\x1b[0mtail text"
 	expectedTail := "tail text"
-	fmt.Fprintf(w, inputTail)
+	fmt.Fprint(w, inputTail)
 	actualTail := inner.String()
 	inner.Reset()
 	if actualTail != expectedTail {
@@ -59,7 +59,7 @@ func TestWriteParseText(t *testing.T) {
 
 	inputHead := "head text\x1b[0m"
 	expectedHead := "head text"
-	fmt.Fprintf(w, inputHead)
+	fmt.Fprint(w, inputHead)
 	actualHead := inner.String()
 	inner.Reset()
 	if actualHead != expectedHead {
@@ -68,7 +68,7 @@ func TestWriteParseText(t *testing.T) {
 
 	inputBothEnds := "both ends \x1b[0m text"
 	expectedBothEnds := "both ends  text"
-	fmt.Fprintf(w, inputBothEnds)
+	fmt.Fprint(w, inputBothEnds)
 	actualBothEnds := inner.String()
 	inner.Reset()
 	if actualBothEnds != expectedBothEnds {
@@ -77,7 +77,7 @@ func TestWriteParseText(t *testing.T) {
 
 	inputManyEsc := "\x1b\x1b\x1b\x1b[0m many esc"
 	expectedManyEsc := "\x1b\x1b\x1b many esc"
-	fmt.Fprintf(w, inputManyEsc)
+	fmt.Fprint(w, inputManyEsc)
 	actualManyEsc := inner.String()
 	inner.Reset()
 	if actualManyEsc != expectedManyEsc {
@@ -86,7 +86,7 @@ func TestWriteParseText(t *testing.T) {
 
 	expectedSplit := "split  text"
 	for _, ch := range "split \x1b[0m text" {
-		fmt.Fprintf(w, string(ch))
+		fmt.Fprint(w, string(ch))
 	}
 	actualSplit := inner.String()
 	inner.Reset()
@@ -258,7 +258,7 @@ func TestIgnoreUnknownSequences(t *testing.T) {
 
 	inputText := "\x1b[=decpath mode"
 	expectedTail := inputText
-	fmt.Fprintf(w, inputText)
+	fmt.Fprint(w, inputText)
 	actualTail := inner.String()
 	inner.Reset()
 	if actualTail != expectedTail {
@@ -267,7 +267,7 @@ func TestIgnoreUnknownSequences(t *testing.T) {
 
 	inputText = "\x1b[=tailing esc and bracket\x1b["
 	expectedTail = inputText
-	fmt.Fprintf(w, inputText)
+	fmt.Fprint(w, inputText)
 	actualTail = inner.String()
 	inner.Reset()
 	if actualTail != expectedTail {
@@ -276,7 +276,7 @@ func TestIgnoreUnknownSequences(t *testing.T) {
 
 	inputText = "\x1b[?tailing esc\x1b"
 	expectedTail = inputText
-	fmt.Fprintf(w, inputText)
+	fmt.Fprint(w, inputText)
 	actualTail = inner.String()
 	inner.Reset()
 	if actualTail != expectedTail {
@@ -285,7 +285,7 @@ func TestIgnoreUnknownSequences(t *testing.T) {
 
 	inputText = "\x1b[1h;3punended color code invalid\x1b3"
 	expectedTail = inputText
-	fmt.Fprintf(w, inputText)
+	fmt.Fprint(w, inputText)
 	actualTail = inner.String()
 	inner.Reset()
 	if actualTail != expectedTail {

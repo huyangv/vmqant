@@ -14,7 +14,9 @@
 package defaultrpc
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -33,8 +35,12 @@ type NatsClient struct {
 	callinfos         sync.Map // 使用 sync.Map 替代 BeeMap，提升并发性能
 	callbackqueueName string
 	app               module.App
-	done              chan error
-	subs              *nats.Subscription
+	done              chan struct{}
+	loopDone          chan struct{}
+	stopOnce          sync.Once
+	stateMu           sync.Mutex
+	requestContext    context.Context
+	cancelRequest     context.CancelFunc
 	isClose           atomic.Bool
 	session           module.ServerSession
 }
@@ -44,14 +50,17 @@ func NewNatsClient(app module.App, session module.ServerSession) (client *NatsCl
 	client.session = session
 	client.app = app
 	client.callbackqueueName = nats.NewInbox()
-	client.done = make(chan error)
+	client.done = make(chan struct{})
+	client.loopDone = make(chan struct{})
+	client.requestContext, client.cancelRequest = context.WithCancel(context.Background())
 	client.isClose.Store(false)
 	go client.on_request_handle()
 	return client, nil
 }
 
+// Delete 只撤销待处理登记，不竞争关闭回调。
 func (c *NatsClient) Delete(key string) (err error) {
-	c.callinfos.Delete(key)
+	c.callinfos.LoadAndDelete(key)
 	return
 }
 func (c *NatsClient) CloseFch(fch chan *rpcpb.ResultInfo) {
@@ -63,24 +72,28 @@ func (c *NatsClient) CloseFch(fch chan *rpcpb.ResultInfo) {
 
 	close(fch) // panic if ch is closed
 }
-func (c *NatsClient) Done() (err error) {
-	//关闭amqp链接通道
-	//close(c.send_chan)
-	//c.send_done<-nil
 
-	//清理 callinfos 列表
-	c.callinfos.Range(func(key, value interface{}) bool {
-		if value != nil {
-			clinetCallInfo := value.(ClinetCallInfo)
-			//关闭管道
-			c.CloseFch(clinetCallInfo.call)
-			//从Map中删除
-			c.callinfos.Delete(key)
-		}
-		return true // 继续遍历
+// Done 幂等广播停止，等待请求循环退出并清理剩余回调。
+func (c *NatsClient) Done() (err error) {
+	c.stopOnce.Do(func() {
+		c.stateMu.Lock()
+		c.isClose.Store(true)
+		close(c.done)
+		c.cancelRequest()
+		c.stateMu.Unlock()
+		// 不持锁等待循环退出，避免阻塞回调发送或订阅清理。
+		<-c.loopDone
+		c.callinfos.Range(func(key, value interface{}) bool {
+			// 只有成功取走登记的调用方拥有关闭回调的权限。
+			if value, ok := c.callinfos.LoadAndDelete(key); ok {
+				info := value.(ClinetCallInfo)
+				if info.call != nil {
+					c.CloseFch(info.call)
+				}
+			}
+			return true
+		})
 	})
-	c.isClose.Store(true)
-	c.done <- nil
 	return
 }
 
@@ -89,10 +102,6 @@ func (c *NatsClient) Done() (err error) {
 消息请求
 */
 func (c *NatsClient) Call(callInfo *mqrpc.CallInfo, callback chan *rpcpb.ResultInfo) error {
-	//var err error
-	if c.isClose.Load() {
-		return fmt.Errorf("AMQPClient is closed")
-	}
 	callInfo.RPCInfo.ReplyTo = c.callbackqueueName
 	var correlation_id = callInfo.RPCInfo.Cid
 
@@ -101,12 +110,21 @@ func (c *NatsClient) Call(callInfo *mqrpc.CallInfo, callback chan *rpcpb.ResultI
 		call:           callback,
 		timeout:        callInfo.RPCInfo.Expired,
 	}
-	c.callinfos.Store(correlation_id, clinetCallInfo)
 	body, err := c.Marshal(callInfo.RPCInfo)
 	if err != nil {
 		return err
 	}
-	return c.app.Transport().Publish(c.session.GetNode().Address, body)
+	// 序列化不占生命周期锁，登记和发布仍与停止保持互斥。
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.isClose.Load() {
+		return fmt.Errorf("AMQPClient is closed")
+	}
+	c.callinfos.Store(correlation_id, clinetCallInfo)
+	if err = c.app.Transport().Publish(c.session.GetNode().Address, body); err != nil {
+		c.callinfos.LoadAndDelete(correlation_id)
+	}
+	return err
 }
 
 /*
@@ -118,6 +136,12 @@ func (c *NatsClient) CallNR(callInfo *mqrpc.CallInfo) error {
 	if err != nil {
 		return err
 	}
+	// 发布仍受生命周期锁保护，避免停止返回后继续发送。
+	c.stateMu.Lock()
+	defer c.stateMu.Unlock()
+	if c.isClose.Load() {
+		return fmt.Errorf("AMQPClient is closed")
+	}
 	return c.app.Transport().Publish(c.session.GetNode().Address, body)
 }
 
@@ -125,106 +149,85 @@ func (c *NatsClient) CallNR(callInfo *mqrpc.CallInfo) error {
 *
 接收应答信息
 */
+// on_request_handle 独占订阅，停止时取消接收和回调发送。
 func (c *NatsClient) on_request_handle() (err error) {
+	defer close(c.loopDone)
 	defer func() {
 		if r := recover(); r != nil {
-			var rn = ""
-			switch r.(type) {
-
-			case string:
-				rn = r.(string)
-			case error:
-				rn = r.(error).Error()
-			}
-			buf := make([]byte, 1024)
-			l := runtime.Stack(buf, false)
-			errstr := string(buf[:l])
-			log.Error("%s\n ----Stack----\n%s", rn, errstr)
-			fmt.Println(errstr)
+			buf := make([]byte, 4096)
+			n := runtime.Stack(buf, false)
+			fmt.Fprintf(os.Stderr, "NatsClient panic: %v\n%s", r, buf[:n])
 		}
 	}()
-	c.subs, err = c.app.Transport().SubscribeSync(c.callbackqueueName)
+	subs, err := c.app.Transport().SubscribeSync(c.callbackqueueName)
 	if err != nil {
 		return err
 	}
-
-	go func() {
-		<-c.done
-		c.subs.Unsubscribe()
+	defer func() {
+		if subs != nil {
+			_ = subs.Unsubscribe()
+		}
 	}()
-
 	for !c.isClose.Load() {
-		m, err := c.subs.NextMsg(time.Minute)
+		m, receiveErr := subs.NextMsgWithContext(c.requestContext)
 		if c.isClose.Load() {
 			break
 		}
-		if err != nil && err == nats.ErrTimeout {
-			//fmt.Println(err.Error())
-			//log.Warning("NatsServer error with '%v'",err)
-			if !c.subs.IsValid() {
-				//订阅已关闭，需要重新订阅
-				c.subs, err = c.app.Transport().SubscribeSync(c.callbackqueueName)
-				if err != nil {
-					log.Error("NatsClient SubscribeSync[1] error with '%v'", err)
+		if receiveErr != nil {
+			if receiveErr.Error() != "nats: invalid subscription" {
+				log.Error("NatsClient error with '%v'", receiveErr)
+			}
+			if !subs.IsValid() {
+				replacement, subscribeErr := c.app.Transport().SubscribeSync(c.callbackqueueName)
+				if subscribeErr != nil {
+					log.Error("NatsClient SubscribeSync[2] error with '%v'", subscribeErr)
+					// 重订阅失败后短暂等待，停止可立即取消，保留连接池恢复机会。
+					timer := time.NewTimer(100 * time.Millisecond)
+					select {
+					case <-timer.C:
+					case <-c.requestContext.Done():
+						timer.Stop()
+						return nil
+					case <-c.done:
+						timer.Stop()
+						return nil
+					}
 					continue
 				}
-			}
-			continue
-		} else if err != nil {
-			//fmt.Println(fmt.Sprintf("%v rpcclient error: %v", time.Now().String(), err.Error()))
-			if err.Error() != "nats: invalid subscription" {
-				log.Error("NatsClient error with '%v'", err)
-			}
-			if !c.subs.IsValid() {
-				//订阅已关闭，需要重新订阅
-				c.subs, err = c.app.Transport().SubscribeSync(c.callbackqueueName)
-				if err != nil {
-					log.Error("NatsClient SubscribeSync[2] error with '%v'", err)
-					continue
-				}
+				subs = replacement
 			}
 			continue
 		}
-
-		resultInfo, err := c.UnmarshalResult(m.Data)
-		if err != nil {
-			log.Error("Unmarshal faild", err)
+		resultInfo, decodeErr := c.UnmarshalResult(m.Data)
+		if decodeErr != nil {
+			log.Error("Unmarshal failed: %v", decodeErr)
+			continue
+		}
+		// 取走登记后，循环成为回调发送和关闭的唯一所有者。
+		if val, ok := c.callinfos.LoadAndDelete(resultInfo.Cid); ok {
+			c.PushResultToChan(val.(ClinetCallInfo), resultInfo)
 		} else {
-			correlation_id := resultInfo.Cid
-			if val, ok := c.callinfos.LoadAndDelete(correlation_id); ok {
-				clinetCallInfo := val.(ClinetCallInfo)
-				c.PushResultToChan(clinetCallInfo, resultInfo)
-			} else {
-				//可能客户端已超时了，但服务端处理完还给回调了
-				log.Warning("rpc callback no found : [%s]", correlation_id)
-			}
+			log.Warning("rpc callback no found : [%s]", resultInfo.Cid)
 		}
 	}
-
 	return nil
 }
 
+// PushResultToChan 由登记所有者发送结果，停止时取消阻塞发送。
 func (c *NatsClient) PushResultToChan(callInfo ClinetCallInfo, resultInfo *rpcpb.ResultInfo) {
 	defer func() {
 		if r := recover(); r != nil {
-			var rn = ""
-			switch r.(type) {
-
-			case string:
-				rn = r.(string)
-			case error:
-				rn = r.(error).Error()
-			}
-			buf := make([]byte, 1024)
-			l := runtime.Stack(buf, false)
-			errstr := string(buf[:l])
-			log.Error("%s\n ----Stack----\n%s", rn, errstr)
-			fmt.Println(errstr)
+			buf := make([]byte, 4096)
+			n := runtime.Stack(buf, false)
+			fmt.Fprintf(os.Stderr, "NatsClient callback panic: %v\n%s", r, buf[:n])
 		}
 	}()
 	if callInfo.call != nil {
-		callInfo.call <- resultInfo
-		c.CloseFch(callInfo.call)
+		defer c.CloseFch(callInfo.call)
+		select {
+		case callInfo.call <- resultInfo:
+		case <-c.done:
+		}
 	}
 }
 

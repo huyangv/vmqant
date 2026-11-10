@@ -219,6 +219,8 @@ func DefineErrorLogFunc(processId string, loggerFuncCallDepth int) FormatFunc {
 // it can contain several providers and log message into all providers.
 type BeeLogger struct {
 	lock                sync.Mutex
+	lifecycle           sync.RWMutex // 写入持读锁，Flush/Close 持写锁；消费者不获取此锁。
+	closed              bool
 	level               int
 	init                bool
 	enableFuncCallDepth bool
@@ -248,7 +250,7 @@ type logMsg struct {
 	when     time.Time
 }
 
-var logMsgPool *sync.Pool
+var logMsgPool = &sync.Pool{New: func() interface{} { return &logMsg{} }}
 
 // NewLogger returns a new BeeLogger.
 // channelLen means the number of messages in chan(used where asynchronous is true).
@@ -269,6 +271,11 @@ func NewLogger(channelLens ...int64) *BeeLogger {
 
 // Async set the log to asynchronous and start the goroutine
 func (bl *BeeLogger) Async(msgLen ...int64) *BeeLogger {
+	bl.lifecycle.Lock()
+	defer bl.lifecycle.Unlock()
+	if bl.closed {
+		return bl
+	}
 	bl.lock.Lock()
 	defer bl.lock.Unlock()
 	if bl.asynchronous {
@@ -279,11 +286,6 @@ func (bl *BeeLogger) Async(msgLen ...int64) *BeeLogger {
 		bl.msgChanLen = msgLen[0]
 	}
 	bl.msgChan = make(chan *logMsg, bl.msgChanLen)
-	logMsgPool = &sync.Pool{
-		New: func() interface{} {
-			return &logMsg{}
-		},
-	}
 	bl.wg.Add(1)
 	go bl.startLogger()
 	return bl
@@ -393,6 +395,11 @@ func (bl *BeeLogger) writeToLoggers(original bool, when time.Time, msg string, l
 
 func (bl *BeeLogger) Write(p []byte) (n int, err error) {
 	if len(p) == 0 {
+		bl.lifecycle.RLock()
+		defer bl.lifecycle.RUnlock()
+		if bl.closed {
+			return 0, fmt.Errorf("logs: logger is closed")
+		}
 		return 0, nil
 	}
 	// writeMsg will always add a '\n' character
@@ -502,11 +509,16 @@ func (bl *BeeLogger) formatJson(when time.Time, span *BeegoTraceSpan, logLevel i
 }
 
 func (bl *BeeLogger) writeMsg(span *BeegoTraceSpan, logLevel int, msg string, v ...interface{}) error {
-	if !bl.init {
-		bl.lock.Lock()
-		bl.setLogger(AdapterConsole)
-		bl.lock.Unlock()
+	bl.lifecycle.RLock()
+	defer bl.lifecycle.RUnlock()
+	if bl.closed {
+		return fmt.Errorf("logs: logger is closed")
 	}
+	bl.lock.Lock()
+	if !bl.init {
+		bl.setLogger(AdapterConsole)
+	}
+	bl.lock.Unlock()
 
 	when := time.Now()
 	original := false
@@ -546,11 +558,16 @@ func (bl *BeeLogger) writeMsg(span *BeegoTraceSpan, logLevel int, msg string, v 
 }
 
 func (bl *BeeLogger) writeBiReport(msg string, logLevel int) error {
-	if !bl.init {
-		bl.lock.Lock()
-		bl.setLogger(AdapterConsole)
-		bl.lock.Unlock()
+	bl.lifecycle.RLock()
+	defer bl.lifecycle.RUnlock()
+	if bl.closed {
+		return fmt.Errorf("logs: logger is closed")
 	}
+	bl.lock.Lock()
+	if !bl.init {
+		bl.setLogger(AdapterConsole)
+	}
+	bl.lock.Unlock()
 
 	when := time.Now()
 	if bl.asynchronous {
@@ -768,6 +785,11 @@ func (bl *BeeLogger) BiReport(msg string) {
 
 // Flush flush all chan data.
 func (bl *BeeLogger) Flush() {
+	bl.lifecycle.Lock()
+	defer bl.lifecycle.Unlock()
+	if bl.closed {
+		return
+	}
 	if bl.asynchronous {
 		bl.signalChan <- "flush"
 		bl.wg.Wait()
@@ -779,6 +801,12 @@ func (bl *BeeLogger) Flush() {
 
 // Close close logger, flush all chan data and destroy all adapters in BeeLogger.
 func (bl *BeeLogger) Close() {
+	bl.lifecycle.Lock()
+	defer bl.lifecycle.Unlock()
+	if bl.closed {
+		return
+	}
+	bl.closed = true
 	if bl.asynchronous {
 		bl.signalChan <- "close"
 		bl.wg.Wait()
